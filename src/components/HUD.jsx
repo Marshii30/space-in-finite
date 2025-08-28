@@ -1,8 +1,14 @@
 import React from "react";
 
+/**
+ * Heads-Up Display
+ * - Center-top "Height: 0 m" chip (updated by GameCanvas).
+ * - Settings button (top-right) -> modal with Mute + Home.
+ */
 export default function HUD({ open, setOpen, muted, setMuted, onHome }) {
   return (
     <>
+      {/* Center-top score */}
       <div
         id="hud-score"
         style={{
@@ -22,6 +28,7 @@ export default function HUD({ open, setOpen, muted, setMuted, onHome }) {
         Height: <strong>0 m</strong>
       </div>
 
+      {/* Settings button */}
       <div style={{ position: "fixed", top: 10, right: 10, zIndex: 30 }}>
         <button className="btn" style={{ padding: "8px 12px" }} onClick={() => setOpen(true)}>
           ⚙️ Settings
