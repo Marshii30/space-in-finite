@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useMemo } from "react";
 
 /* ---------- canvas size ---------- */
 const W = 480, H = 800;
@@ -25,6 +25,12 @@ export default function GameCanvas({ running, onProgress }) {
   const st = useRef(null);
   const progRef = useRef(onProgress);
   useEffect(()=>{ progRef.current = onProgress; }, [onProgress]);
+
+  /* detect touch device once */
+  const isTouch = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    return ("ontouchstart" in window) || (navigator.maxTouchPoints > 0);
+  }, []);
 
   /* ---------- bootstrap ---------- */
   useEffect(() => {
@@ -82,7 +88,7 @@ export default function GameCanvas({ running, onProgress }) {
     return () => cancelAnimationFrame(rafRef.current);
   }, [running]);
 
-  /* ---------- inputs (MOBILE-HARDENED) ---------- */
+  /* ---------- inputs (MOBILE-HARDENED + desktop) ---------- */
   useEffect(() => {
     const canvas = fgRef.current;
     if (!canvas) return;
@@ -98,9 +104,8 @@ export default function GameCanvas({ running, onProgress }) {
 
     const pointerDown = (e) => {
       const s = st.current; if (!s) return;
-      if (activePointer !== null) return;               // single-pointer
+      if (activePointer !== null) return;
       activePointer = e.pointerId ?? 1;
-
       try { canvas.setPointerCapture?.(activePointer); } catch(_) {}
       e.preventDefault();
       startX = e.clientX; startY = e.clientY;
@@ -161,40 +166,12 @@ export default function GameCanvas({ running, onProgress }) {
       }
     };
 
-    // --- Touch fallback (calls the same pointer handlers) ---
-    const touchToClient = (te) => {
-      const t = te.changedTouches[0];
-      return { clientX: t.clientX, clientY: t.clientY };
-    };
-    const tstart = (e) => {
-      if (!e.changedTouches || e.changedTouches.length === 0) return;
-      const { clientX, clientY } = touchToClient(e);
-      pointerDown({ clientX, clientY, pointerId: 1, preventDefault: () => e.preventDefault() });
-    };
-    const tmove = (e) => {
-      if (!e.changedTouches || e.changedTouches.length === 0) return;
-      const { clientX, clientY } = touchToClient(e);
-      pointerMove({ clientX, clientY, pointerId: 1, preventDefault: () => e.preventDefault() });
-    };
-    const tend = (e) => {
-      if (!e.changedTouches || e.changedTouches.length === 0) return;
-      const { clientX, clientY } = touchToClient(e);
-      release({ clientX, clientY, pointerId: 1, preventDefault: () => e.preventDefault() });
-    };
-
     const opts = { passive: false };
     canvas.addEventListener("pointerdown", pointerDown, opts);
     canvas.addEventListener("pointermove", pointerMove, opts);
     canvas.addEventListener("pointerup",   release,     opts);
     canvas.addEventListener("pointercancel", release,   opts);
     canvas.addEventListener("pointerleave",  release,   opts);
-
-    // touch fallback
-    canvas.addEventListener("touchstart", tstart, opts);
-    canvas.addEventListener("touchmove",  tmove,  opts);
-    canvas.addEventListener("touchend",   tend,   opts);
-    canvas.addEventListener("touchcancel",tend,   opts);
-
     window.addEventListener("keydown", keyDown, opts);
     window.addEventListener("keyup",   keyUp,   opts);
 
@@ -204,12 +181,6 @@ export default function GameCanvas({ running, onProgress }) {
       canvas.removeEventListener("pointerup",   release);
       canvas.removeEventListener("pointercancel", release);
       canvas.removeEventListener("pointerleave",  release);
-
-      canvas.removeEventListener("touchstart", tstart);
-      canvas.removeEventListener("touchmove",  tmove);
-      canvas.removeEventListener("touchend",   tend);
-      canvas.removeEventListener("touchcancel",tend);
-
       window.removeEventListener("keydown", keyDown);
       window.removeEventListener("keyup",   keyUp);
       canvas.style.touchAction = oldTA;
@@ -217,15 +188,83 @@ export default function GameCanvas({ running, onProgress }) {
     };
   }, []);
 
+  /* ------ mobile on-screen controls (added; desktop unaffected) ------ */
+  const startLeft = () => { const s = st.current; if (s) s.input.left = 1; };
+  const stopLeft  = () => { const s = st.current; if (s) s.input.left = 0; };
+  const startRight= () => { const s = st.current; if (s) s.input.right = 1; };
+  const stopRight = () => { const s = st.current; if (s) s.input.right = 0; };
+
+  const jumpHold  = () => { const s = st.current; if (s && !s.input.spaceHeld) { s.input.spaceHeld = true; s.input.spaceStart = s.time; } };
+  const jumpRelease = () => {
+    const s = st.current; if (!s || !s.input.spaceHeld) return;
+    const held = Math.max(0.02, s.time - s.input.spaceStart);
+    const power = clamp(CHARGE_MIN + held, CHARGE_MIN, CHARGE_MAX);
+    s.input.spaceHeld = false;
+    s.input.wantJump = { power, dirX: 0, at: s.time };
+  };
+
   return (
     <div className="game-wrap" style={{ touchAction: "none" }}>
-      <div className="stage">
+      <div className="stage" style={{ position:"relative" }}>
         <canvas ref={bgRef} width={W} height={H} style={{ pointerEvents: "none" }} />
         <canvas ref={fgRef} width={W} height={H} />
+
+        {/* On-screen controls only on touch devices */}
+        {isTouch && (
+          <div
+            style={{
+              position:"absolute", left:0, right:0, bottom:10,
+              display:"flex", justifyContent:"space-between",
+              padding:"0 12px", userSelect:"none", zIndex:5
+            }}
+          >
+            {/* Left */}
+            <button
+              aria-label="Left"
+              onTouchStart={(e)=>{e.preventDefault(); startLeft();}}
+              onTouchEnd={(e)=>{e.preventDefault(); stopLeft();}}
+              onTouchCancel={(e)=>{e.preventDefault(); stopLeft();}}
+              onPointerDown={(e)=>{e.preventDefault(); startLeft();}}
+              onPointerUp={(e)=>{e.preventDefault(); stopLeft();}}
+              style={btnStyle}
+            >⬅️</button>
+
+            {/* Jump (hold to charge) */}
+            <button
+              aria-label="Jump"
+              onTouchStart={(e)=>{e.preventDefault(); jumpHold();}}
+              onTouchEnd={(e)=>{e.preventDefault(); jumpRelease();}}
+              onTouchCancel={(e)=>{e.preventDefault(); jumpRelease();}}
+              onPointerDown={(e)=>{e.preventDefault(); jumpHold();}}
+              onPointerUp={(e)=>{e.preventDefault(); jumpRelease();}}
+              style={{...btnStyle, width:120, fontWeight:700}}
+            >JUMP</button>
+
+            {/* Right */}
+            <button
+              aria-label="Right"
+              onTouchStart={(e)=>{e.preventDefault(); startRight();}}
+              onTouchEnd={(e)=>{e.preventDefault(); stopRight();}}
+              onTouchCancel={(e)=>{e.preventDefault(); stopRight();}}
+              onPointerDown={(e)=>{e.preventDefault(); startRight();}}
+              onPointerUp={(e)=>{e.preventDefault(); stopRight();}}
+              style={btnStyle}
+            >➡️</button>
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
+/* small shared style for mobile buttons (inline so no CSS changes) */
+const btnStyle = {
+  width: 72, height: 44, borderRadius: 12,
+  background: "rgba(10,14,22,.5)",
+  border: "1px solid rgba(255,255,255,.15)",
+  color: "#e8f6ff", fontSize: 16,
+  backdropFilter: "blur(8px)"
+};
 
 /* ================== WORLD / PHYSICS (unchanged) ================== */
 
@@ -256,18 +295,12 @@ function createWorld(){
   s.player.vx = 0; s.player.vy = 0; s.player.onGround = true;
   s.lastGroundedAt = 0;
 
-  // initial platforms (static, BUT add a few movers randomly so they exist “here and there”)
+  // initial platforms (static)
   let y = BASE_TOP - 130;
   for(let i=0;i<6;i++){
     const w = i<2 ? 120 : Math.max(70, 120 - i*10);
     const x = 40 + Math.random()*(W - 80 - w);
-    const p = { x, y, w, h:14, type:"plat", move: 0, phase: 0 };
-    // ~30% chance to patrol on the upper 4 initial platforms
-    if (i >= 2 && Math.random() < 0.30) {
-      p.move = 60 + Math.random()*80;
-      p.phase = Math.random()*6;
-    }
-    s.platforms.push(p);
+    s.platforms.push({ x, y, w, h:14, type:"plat", move: 0, phase: 0 });
     y -= 120;
   }
 
@@ -358,45 +391,32 @@ function updateWorld(s, dt){
 
   // spawn more platforms up to 3000 m (same difficulty curve you had)
   spawnAsNeeded(s);
-
-  // move any patrolling platforms (unchanged behavior)
-  for (const p of s.platforms) {
-    if (p.move) {
-      p.phase += dt;
-      p.x += Math.sin(p.phase) * p.move * dt * 0.8;
-      p.x = Math.max(12, Math.min(W - p.w - 12, p.x));
-    }
-  }
 }
 
 /* ---------- spawning with your difficulty tiers (unchanged) ---------- */
 function spawnAsNeeded(s){
-  // only add if the highest platform is not too far above the camera
   while (true) {
-    // Stop when we’ve reached the max height to generate for
     const spawnedMeters = Math.max(0, Math.round((s.startY - s.nextSpawnY) / 10));
     if (spawnedMeters >= s.maxMeters) break;
 
-    // If topmost platform is already well above the camera, pause spawning
     const highestY = Math.min(...s.platforms.map(p=>p.y));
     if (highestY < s.camY - 120) break;
 
-    // difficulty curve
     const m = spawnedMeters;
     let wMin=70, wMax=120, gap=120, movers=0;
 
     if (m < 300) {                      // Level 1
-      wMin = 70; wMax = 120; gap = 120; movers = 0.10;
+      wMin = 70; wMax = 120; gap = 120; movers = 0;
     } else if (m < 600) {               // tougher: smaller
-      wMin = 40; wMax = 70;  gap = 128; movers = 0.12;
+      wMin = 40; wMax = 70;  gap = 128; movers = 0;
     } else if (m < 1000) {              // bigger gaps
-      wMin = 50; wMax = 90;  gap = 145; movers = 0.15;
+      wMin = 50; wMax = 90;  gap = 145; movers = 0;
     } else if (m < 1500) {              // movers + hazards window
       wMin = 54; wMax = 92;  gap = 150; movers = 0.25;
     } else if (m < 2000) {              // tiny + big gaps + more movers
       wMin = 36; wMax = 64;  gap = 165; movers = 0.32;
     } else if (m < 2700) {              // normal again (breather)
-      wMin = 70; wMax = 120; gap = 120; movers = 0.10;
+      wMin = 70; wMax = 120; gap = 120; movers = 0;
     } else {                             // 2700–3000: brutal
       wMin = 28; wMax = 44;  gap = 185; movers = 0.40;
     }
