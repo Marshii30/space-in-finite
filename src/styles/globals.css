@@ -37,6 +37,8 @@ body{
 .stage canvas{
   position:absolute;
   inset:0;
+  /* IMPORTANT: avoid blur/double on HiDPI Safari */
+  image-rendering: pixelated;
 }
 
 /* Buttons */
@@ -84,28 +86,42 @@ kbd{
   font-size:12px;
 }
 
-/* ================== MOBILE CONTROLS ================== */
-.mobile-controls {
-  position: absolute;
-  bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 12px;
-  z-index: 20;
+/* ===================================================== */
+/* MOBILE CONTROLS (only show on narrow touch devices)   */
+/* ===================================================== */
+
+.mobile-controls{
+  position:absolute;
+  bottom:14px;
+  left:0; right:0;
+  display:none;               /* hidden by default (desktop) */
+  place-items:center;
+  gap:12px;
+  padding:0 10px;
+  pointer-events:none;        /* allow canvas to still receive events */
 }
 
-.ctrl-btn {
-  background: rgba(255, 255, 255, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 12px;
-  padding: 12px 18px;
-  font-size: 16px;
-  font-weight: bold;
-  color: white;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.35);
+.mc-btn{
+  pointer-events:auto;        /* but the buttons themselves are clickable */
+  min-width:84px;
+  height:52px;
+  border-radius:14px;
+  border:1px solid rgba(255,255,255,.14);
+  background: rgba(20,30,50,.55);
+  color:#e8f6ff;
+  font-weight:800;
+  letter-spacing:.5px;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 6px 18px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.05);
+}
+.mc-jump{
+  min-width:130px;
+  height:56px;
+  font-weight:900;
+  background: radial-gradient(180px 60px at 50% 120%, rgba(88,204,255,.9), rgba(88,204,255,.4));
 }
 
-.ctrl-btn.jump {
-  background: rgba(100, 200, 255, 0.25);
+/* Show the controls on small/touch screens */
+@media (hover:none) and (pointer:coarse), (max-width: 560px){
+  .mobile-controls{ display:flex; justify-content:center; }
 }
