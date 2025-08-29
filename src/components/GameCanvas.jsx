@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo } from "react";
+import React, { useEffect, useRef } from "react";
 
 /* ---------- canvas size ---------- */
 const W = 480, H = 800;
@@ -25,12 +25,6 @@ export default function GameCanvas({ running, onProgress }) {
   const st = useRef(null);
   const progRef = useRef(onProgress);
   useEffect(()=>{ progRef.current = onProgress; }, [onProgress]);
-
-  /* detect touch device once */
-  const isTouch = useMemo(() => {
-    if (typeof window === "undefined") return false;
-    return ("ontouchstart" in window) || (navigator.maxTouchPoints > 0);
-  }, []);
 
   /* ---------- bootstrap ---------- */
   useEffect(() => {
@@ -88,7 +82,7 @@ export default function GameCanvas({ running, onProgress }) {
     return () => cancelAnimationFrame(rafRef.current);
   }, [running]);
 
-  /* ---------- inputs (MOBILE-HARDENED + desktop) ---------- */
+  /* ---------- inputs (MOBILE-HARDENED) ---------- */
   useEffect(() => {
     const canvas = fgRef.current;
     if (!canvas) return;
@@ -104,9 +98,13 @@ export default function GameCanvas({ running, onProgress }) {
 
     const pointerDown = (e) => {
       const s = st.current; if (!s) return;
+      // accept only one pointer (first finger)
       if (activePointer !== null) return;
       activePointer = e.pointerId ?? 1;
+
+      // capture so we always get the up/cancel even if finger leaves canvas
       try { canvas.setPointerCapture?.(activePointer); } catch(_) {}
+
       e.preventDefault();
       startX = e.clientX; startY = e.clientY;
       s.input.dragging = true;
@@ -188,85 +186,17 @@ export default function GameCanvas({ running, onProgress }) {
     };
   }, []);
 
-  /* ------ mobile on-screen controls (added; desktop unaffected) ------ */
-  const startLeft = () => { const s = st.current; if (s) s.input.left = 1; };
-  const stopLeft  = () => { const s = st.current; if (s) s.input.left = 0; };
-  const startRight= () => { const s = st.current; if (s) s.input.right = 1; };
-  const stopRight = () => { const s = st.current; if (s) s.input.right = 0; };
-
-  const jumpHold  = () => { const s = st.current; if (s && !s.input.spaceHeld) { s.input.spaceHeld = true; s.input.spaceStart = s.time; } };
-  const jumpRelease = () => {
-    const s = st.current; if (!s || !s.input.spaceHeld) return;
-    const held = Math.max(0.02, s.time - s.input.spaceStart);
-    const power = clamp(CHARGE_MIN + held, CHARGE_MIN, CHARGE_MAX);
-    s.input.spaceHeld = false;
-    s.input.wantJump = { power, dirX: 0, at: s.time };
-  };
-
   return (
     <div className="game-wrap" style={{ touchAction: "none" }}>
-      <div className="stage" style={{ position:"relative" }}>
+      <div className="stage">
         <canvas ref={bgRef} width={W} height={H} style={{ pointerEvents: "none" }} />
         <canvas ref={fgRef} width={W} height={H} />
-
-        {/* On-screen controls only on touch devices */}
-        {isTouch && (
-          <div
-            style={{
-              position:"absolute", left:0, right:0, bottom:10,
-              display:"flex", justifyContent:"space-between",
-              padding:"0 12px", userSelect:"none", zIndex:5
-            }}
-          >
-            {/* Left */}
-            <button
-              aria-label="Left"
-              onTouchStart={(e)=>{e.preventDefault(); startLeft();}}
-              onTouchEnd={(e)=>{e.preventDefault(); stopLeft();}}
-              onTouchCancel={(e)=>{e.preventDefault(); stopLeft();}}
-              onPointerDown={(e)=>{e.preventDefault(); startLeft();}}
-              onPointerUp={(e)=>{e.preventDefault(); stopLeft();}}
-              style={btnStyle}
-            >⬅️</button>
-
-            {/* Jump (hold to charge) */}
-            <button
-              aria-label="Jump"
-              onTouchStart={(e)=>{e.preventDefault(); jumpHold();}}
-              onTouchEnd={(e)=>{e.preventDefault(); jumpRelease();}}
-              onTouchCancel={(e)=>{e.preventDefault(); jumpRelease();}}
-              onPointerDown={(e)=>{e.preventDefault(); jumpHold();}}
-              onPointerUp={(e)=>{e.preventDefault(); jumpRelease();}}
-              style={{...btnStyle, width:120, fontWeight:700}}
-            >JUMP</button>
-
-            {/* Right */}
-            <button
-              aria-label="Right"
-              onTouchStart={(e)=>{e.preventDefault(); startRight();}}
-              onTouchEnd={(e)=>{e.preventDefault(); stopRight();}}
-              onTouchCancel={(e)=>{e.preventDefault(); stopRight();}}
-              onPointerDown={(e)=>{e.preventDefault(); startRight();}}
-              onPointerUp={(e)=>{e.preventDefault(); stopRight();}}
-              style={btnStyle}
-            >➡️</button>
-          </div>
-        )}
       </div>
     </div>
   );
 }
 
-/* small shared style for mobile buttons (inline so no CSS changes) */
-const btnStyle = {
-  width: 72, height: 44, borderRadius: 12,
-  background: "rgba(10,14,22,.5)",
-  border: "1px solid rgba(255,255,255,.15)",
-  color: "#e8f6ff", fontSize: 16,
-  backdropFilter: "blur(8px)"
-};
-
-/* ================== WORLD / PHYSICS (unchanged) ================== */
+/* ================== WORLD / PHYSICS ================== */
 
 function createWorld(){
   const s = {
@@ -284,7 +214,7 @@ function createWorld(){
     platforms: [],
     startY: 0,
     nextSpawnY: 0,
-    maxMeters: 3000,           // keep your 3km run
+    maxMeters: 3000,
   };
 
   // base
@@ -307,7 +237,7 @@ function createWorld(){
   s.startY = s.player.y;
   s.peakY  = s.player.y;
   s.camY   = s.player.y - CAM_OFFSET;
-  s.nextSpawnY = y; // continue spawning upward from here
+  s.nextSpawnY = y;
   return s;
 }
 
@@ -389,11 +319,11 @@ function updateWorld(s, dt){
   const targetCam = s.player.y - CAM_OFFSET;
   s.camY += (targetCam - s.camY) * CAM_LAG;
 
-  // spawn more platforms up to 3000 m (same difficulty curve you had)
+  // spawn more platforms up to 3000 m (your curve)
   spawnAsNeeded(s);
 }
 
-/* ---------- spawning with your difficulty tiers (unchanged) ---------- */
+/* ---------- spawning with your difficulty tiers ---------- */
 function spawnAsNeeded(s){
   while (true) {
     const spawnedMeters = Math.max(0, Math.round((s.startY - s.nextSpawnY) / 10));
@@ -405,19 +335,19 @@ function spawnAsNeeded(s){
     const m = spawnedMeters;
     let wMin=70, wMax=120, gap=120, movers=0;
 
-    if (m < 300) {                      // Level 1
+    if (m < 300) {                      
       wMin = 70; wMax = 120; gap = 120; movers = 0;
-    } else if (m < 600) {               // tougher: smaller
+    } else if (m < 600) {               
       wMin = 40; wMax = 70;  gap = 128; movers = 0;
-    } else if (m < 1000) {              // bigger gaps
+    } else if (m < 1000) {              
       wMin = 50; wMax = 90;  gap = 145; movers = 0;
-    } else if (m < 1500) {              // movers + hazards window
+    } else if (m < 1500) {              
       wMin = 54; wMax = 92;  gap = 150; movers = 0.25;
-    } else if (m < 2000) {              // tiny + big gaps + more movers
+    } else if (m < 2000) {              
       wMin = 36; wMax = 64;  gap = 165; movers = 0.32;
-    } else if (m < 2700) {              // normal again (breather)
+    } else if (m < 2700) {              
       wMin = 70; wMax = 120; gap = 120; movers = 0;
-    } else {                             // 2700–3000: brutal
+    } else {                             
       wMin = 28; wMax = 44;  gap = 185; movers = 0.40;
     }
 
@@ -433,12 +363,11 @@ function spawnAsNeeded(s){
     s.platforms.push(p);
     s.nextSpawnY = y;
 
-    // keep list short: base + ~30 recent
     while (s.platforms.length > 32) s.platforms.splice(1,1);
   }
 }
 
-/* ================== DRAWING (unchanged) ================== */
+/* ================== DRAWING (no doubles) ================== */
 
 function drawBG(ctx, t){
   const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
@@ -467,25 +396,21 @@ function drawBG(ctx, t){
 function drawWorld(ctx, s){
   ctx.clearRect(0,0,W,H);
 
-  // platforms with camera
+  // platforms (SINGLE render per platform)
   for(const p of s.platforms){
     const yy = p.y - s.camY + H/2;
     if (yy < -40 || yy > H+40) continue;
-    const color = p.type==="base" ? "rgba(180,210,255,1.0)" : "rgba(160,190,255,0.9)";
+    const color = p.type==="base" ? "rgba(180,210,255,1.0)" : "rgba(160,190,255,0.95)";
     ctx.fillStyle = color;
-    roundRect(ctx, p.x, yy, p.w, p.h, 8); ctx.fill();
-    if(p.type!=="base"){
-      ctx.fillStyle = "rgba(80,140,255,0.25)";
-      roundRect(ctx, p.x, yy+12, p.w, 8, 6); ctx.fill();
-    }
+    roundRect(ctx, p.x, yy, p.w, p.h, 8); 
+    ctx.fill();
   }
 
-  // player with camera
+  // player (SINGLE square, no glow layer)
   const px = s.player.x, py = s.player.y - s.camY + H/2, ps = s.player.size;
-  ctx.fillStyle = "rgba(120,200,255,.35)";
-  roundRect(ctx, px-6, py-6, ps+12, ps+12, 8); ctx.fill();
   ctx.fillStyle = "#ffffff";
-  roundRect(ctx, px, py, ps, ps, 6); ctx.fill();
+  roundRect(ctx, px, py, ps, ps, 6); 
+  ctx.fill();
 
   // charge ring on HUD
   if(s.input.spaceHeld || s.input.dragging){
