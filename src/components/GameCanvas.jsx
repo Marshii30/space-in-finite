@@ -98,13 +98,10 @@ export default function GameCanvas({ running, onProgress }) {
 
     const pointerDown = (e) => {
       const s = st.current; if (!s) return;
-      // accept only one pointer (first finger)
-      if (activePointer !== null) return;
+      if (activePointer !== null) return;               // single-pointer
       activePointer = e.pointerId ?? 1;
 
-      // capture so we always get the up/cancel even if finger leaves canvas
       try { canvas.setPointerCapture?.(activePointer); } catch(_) {}
-
       e.preventDefault();
       startX = e.clientX; startY = e.clientY;
       s.input.dragging = true;
@@ -164,12 +161,40 @@ export default function GameCanvas({ running, onProgress }) {
       }
     };
 
+    // --- Touch fallback (calls the same pointer handlers) ---
+    const touchToClient = (te) => {
+      const t = te.changedTouches[0];
+      return { clientX: t.clientX, clientY: t.clientY };
+    };
+    const tstart = (e) => {
+      if (!e.changedTouches || e.changedTouches.length === 0) return;
+      const { clientX, clientY } = touchToClient(e);
+      pointerDown({ clientX, clientY, pointerId: 1, preventDefault: () => e.preventDefault() });
+    };
+    const tmove = (e) => {
+      if (!e.changedTouches || e.changedTouches.length === 0) return;
+      const { clientX, clientY } = touchToClient(e);
+      pointerMove({ clientX, clientY, pointerId: 1, preventDefault: () => e.preventDefault() });
+    };
+    const tend = (e) => {
+      if (!e.changedTouches || e.changedTouches.length === 0) return;
+      const { clientX, clientY } = touchToClient(e);
+      release({ clientX, clientY, pointerId: 1, preventDefault: () => e.preventDefault() });
+    };
+
     const opts = { passive: false };
     canvas.addEventListener("pointerdown", pointerDown, opts);
     canvas.addEventListener("pointermove", pointerMove, opts);
     canvas.addEventListener("pointerup",   release,     opts);
     canvas.addEventListener("pointercancel", release,   opts);
     canvas.addEventListener("pointerleave",  release,   opts);
+
+    // touch fallback
+    canvas.addEventListener("touchstart", tstart, opts);
+    canvas.addEventListener("touchmove",  tmove,  opts);
+    canvas.addEventListener("touchend",   tend,   opts);
+    canvas.addEventListener("touchcancel",tend,   opts);
+
     window.addEventListener("keydown", keyDown, opts);
     window.addEventListener("keyup",   keyUp,   opts);
 
@@ -179,6 +204,12 @@ export default function GameCanvas({ running, onProgress }) {
       canvas.removeEventListener("pointerup",   release);
       canvas.removeEventListener("pointercancel", release);
       canvas.removeEventListener("pointerleave",  release);
+
+      canvas.removeEventListener("touchstart", tstart);
+      canvas.removeEventListener("touchmove",  tmove);
+      canvas.removeEventListener("touchend",   tend);
+      canvas.removeEventListener("touchcancel",tend);
+
       window.removeEventListener("keydown", keyDown);
       window.removeEventListener("keyup",   keyUp);
       canvas.style.touchAction = oldTA;
@@ -225,12 +256,18 @@ function createWorld(){
   s.player.vx = 0; s.player.vy = 0; s.player.onGround = true;
   s.lastGroundedAt = 0;
 
-  // initial platforms (static)
+  // initial platforms (static, BUT add a few movers randomly so they exist “here and there”)
   let y = BASE_TOP - 130;
   for(let i=0;i<6;i++){
     const w = i<2 ? 120 : Math.max(70, 120 - i*10);
     const x = 40 + Math.random()*(W - 80 - w);
-    s.platforms.push({ x, y, w, h:14, type:"plat", move: 0, phase: 0 });
+    const p = { x, y, w, h:14, type:"plat", move: 0, phase: 0 };
+    // ~30% chance to patrol on the upper 4 initial platforms
+    if (i >= 2 && Math.random() < 0.30) {
+      p.move = 60 + Math.random()*80;
+      p.phase = Math.random()*6;
+    }
+    s.platforms.push(p);
     y -= 120;
   }
 
@@ -321,19 +358,24 @@ function updateWorld(s, dt){
 
   // spawn more platforms up to 3000 m (same difficulty curve you had)
   spawnAsNeeded(s);
+
+  // move any patrolling platforms (unchanged behavior)
+  for (const p of s.platforms) {
+    if (p.move) {
+      p.phase += dt;
+      p.x += Math.sin(p.phase) * p.move * dt * 0.8;
+      p.x = Math.max(12, Math.min(W - p.w - 12, p.x));
+    }
+  }
 }
 
 /* ---------- spawning with your difficulty tiers (unchanged) ---------- */
 function spawnAsNeeded(s){
-  // meters climbed from start
-  const meters = Math.max(0, Math.round((s.startY - s.nextSpawnY) / 10));
-  const maxMeters = s.maxMeters;
-
   // only add if the highest platform is not too far above the camera
   while (true) {
     // Stop when we’ve reached the max height to generate for
     const spawnedMeters = Math.max(0, Math.round((s.startY - s.nextSpawnY) / 10));
-    if (spawnedMeters >= maxMeters) break;
+    if (spawnedMeters >= s.maxMeters) break;
 
     // If topmost platform is already well above the camera, pause spawning
     const highestY = Math.min(...s.platforms.map(p=>p.y));
@@ -344,17 +386,17 @@ function spawnAsNeeded(s){
     let wMin=70, wMax=120, gap=120, movers=0;
 
     if (m < 300) {                      // Level 1
-      wMin = 70; wMax = 120; gap = 120; movers = 0;
+      wMin = 70; wMax = 120; gap = 120; movers = 0.10;
     } else if (m < 600) {               // tougher: smaller
-      wMin = 40; wMax = 70;  gap = 128; movers = 0;
+      wMin = 40; wMax = 70;  gap = 128; movers = 0.12;
     } else if (m < 1000) {              // bigger gaps
-      wMin = 50; wMax = 90;  gap = 145; movers = 0;
+      wMin = 50; wMax = 90;  gap = 145; movers = 0.15;
     } else if (m < 1500) {              // movers + hazards window
       wMin = 54; wMax = 92;  gap = 150; movers = 0.25;
     } else if (m < 2000) {              // tiny + big gaps + more movers
       wMin = 36; wMax = 64;  gap = 165; movers = 0.32;
     } else if (m < 2700) {              // normal again (breather)
-      wMin = 70; wMax = 120; gap = 120; movers = 0;
+      wMin = 70; wMax = 120; gap = 120; movers = 0.10;
     } else {                             // 2700–3000: brutal
       wMin = 28; wMax = 44;  gap = 185; movers = 0.40;
     }
