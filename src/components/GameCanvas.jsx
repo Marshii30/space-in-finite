@@ -14,7 +14,7 @@ const COYOTE = 0.16;
 const AIR_DAMP = 0.995;
 const NEAR_GROUND_TOL = 1.25;
 
-/* camera (unchanged except for default offset you liked) */
+/* camera (unchanged except for offset you liked) */
 const CAM_LAG = 0.06;
 const CAM_OFFSET = 230; // keep the square nicely visible
 
@@ -23,8 +23,12 @@ export default function GameCanvas({ running, onProgress }) {
   const fgRef = useRef(null);
   const rafRef = useRef(0);
   const st = useRef(null);
+  const aliveRef = useRef(false);    // ensures only one RAF
+  const pausedRef = useRef(false);   // visibility pause state
+
+  // stable onProgress so we don't restart loop
   const progRef = useRef(onProgress);
-  useEffect(()=>{ progRef.current = onProgress; }, [onProgress]);
+  useEffect(() => { progRef.current = onProgress; }, [onProgress]);
 
   /* ---------- bootstrap ---------- */
   useEffect(() => {
@@ -44,23 +48,66 @@ export default function GameCanvas({ running, onProgress }) {
     drawBG(bctx, 0);
     drawWorld(fctx, st.current);
 
-    const onResize = () => { setup(bgRef.current); setup(fgRef.current); drawBG(bctx, st.current?.time || 0); drawWorld(fctx, st.current); };
+    const onResize = () => {
+      setup(bgRef.current);
+      setup(fgRef.current);
+      drawBG(bctx, st.current?.time || 0);
+      drawWorld(fctx, st.current);
+    };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  /* ---------- visibility / page lifecycle (mobile freeze fix) ---------- */
+  useEffect(() => {
+    const pause = () => { pausedRef.current = true; cancelAnimationFrame(rafRef.current); aliveRef.current = false; };
+    const resume = () => {
+      if (!running) return;                 // only if game is supposed to run
+      if (aliveRef.current) return;         // already running
+      const s = st.current;
+      if (s) {                              // re-prime time so dt is small
+        s.last = performance.now() / 1000;
+      }
+      startLoop();                          // restart RAF
+    };
+
+    const onVisibility = () => (document.hidden ? pause() : resume());
+    const onPageShow = () => resume();      // iOS Safari (app switch / back-forward cache)
+    const onPageHide = () => pause();
+
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pageshow", onPageShow);
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("focus", resume);
+    window.addEventListener("blur", pause);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pageshow", onPageShow);
+      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("focus", resume);
+      window.removeEventListener("blur", pause);
+    };
+  }, [running]); // reacts when you hit Play/Stop
+
   /* ---------- main loop ---------- */
   useEffect(() => {
     cancelAnimationFrame(rafRef.current);
+    aliveRef.current = false;
     if (!running) return;
 
+    // fresh run
     const bctx = bgRef.current.getContext("2d");
     const fctx = fgRef.current.getContext("2d");
     st.current = createWorld();
     drawWorld(fctx, st.current);
 
-    const frame = (nowMs) => {
+    // kick the loop
+    startLoop();
+
+    function frame(nowMs) {
       rafRef.current = requestAnimationFrame(frame);
+      if (pausedRef.current) return;
       const s = st.current; if (!s) return;
 
       const now = nowMs / 1000;
@@ -75,14 +122,24 @@ export default function GameCanvas({ running, onProgress }) {
       progRef.current?.(meters);
       const hud = document.getElementById("hud-score");
       if (hud) hud.innerHTML = `Height: <strong>${meters} m</strong>`;
-    };
+    }
 
-    st.current.last = performance.now() / 1000;
-    rafRef.current = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(rafRef.current);
+    function startLoop() {
+      if (aliveRef.current) return;
+      pausedRef.current = false;
+      const s = st.current;
+      if (s) s.last = performance.now() / 1000;
+      aliveRef.current = true;
+      rafRef.current = requestAnimationFrame(frame);
+    }
+
+    return () => {
+      cancelAnimationFrame(rafRef.current);
+      aliveRef.current = false;
+    };
   }, [running]);
 
-  /* ---------- inputs (MOBILE-HARDENED) ---------- */
+  /* ---------- inputs (pointer + keyboard) ---------- */
   useEffect(() => {
     const canvas = fgRef.current;
     if (!canvas) return;
@@ -98,13 +155,9 @@ export default function GameCanvas({ running, onProgress }) {
 
     const pointerDown = (e) => {
       const s = st.current; if (!s) return;
-      // accept only one pointer (first finger)
-      if (activePointer !== null) return;
+      if (activePointer !== null && e.pointerId !== activePointer) return;
       activePointer = e.pointerId ?? 1;
-
-      // capture so we always get the up/cancel even if finger leaves canvas
       try { canvas.setPointerCapture?.(activePointer); } catch(_) {}
-
       e.preventDefault();
       startX = e.clientX; startY = e.clientY;
       s.input.dragging = true;
@@ -121,7 +174,7 @@ export default function GameCanvas({ running, onProgress }) {
     };
 
     const release = (e) => {
-      const s = st.current; 
+      const s = st.current;
       if (!s || !s.input.dragging) { activePointer = null; return; }
       if (activePointer !== null && e.pointerId !== undefined && e.pointerId !== activePointer) return;
 
@@ -150,7 +203,6 @@ export default function GameCanvas({ running, onProgress }) {
         e.preventDefault();
       }
     };
-
     const keyUp = (e) => {
       const s = st.current; if (!s) return;
       if (e.code === "ArrowLeft"  || e.code === "KeyA") { s.input.left = 0; e.preventDefault(); }
@@ -196,7 +248,7 @@ export default function GameCanvas({ running, onProgress }) {
   );
 }
 
-/* ================== WORLD / PHYSICS ================== */
+/* ================== WORLD / PHYSICS (unchanged gameplay) ================== */
 
 function createWorld(){
   const s = {
@@ -258,7 +310,7 @@ function performJump(s, powerNorm, dirX=0){
 }
 
 function updateWorld(s, dt){
-  // consume queued jump
+  // queued jump
   if(s.input.wantJump){
     const ok = performJump(s, s.input.wantJump.power, s.input.wantJump.dirX);
     if(!ok && (s.time - s.input.wantJump.at) > 0.7){
@@ -319,7 +371,7 @@ function updateWorld(s, dt){
   const targetCam = s.player.y - CAM_OFFSET;
   s.camY += (targetCam - s.camY) * CAM_LAG;
 
-  // spawn more platforms up to 3000 m (your curve)
+  // spawn as needed up to 3000 m (your difficulty curve preserved)
   spawnAsNeeded(s);
 }
 
@@ -335,19 +387,19 @@ function spawnAsNeeded(s){
     const m = spawnedMeters;
     let wMin=70, wMax=120, gap=120, movers=0;
 
-    if (m < 300) {                      
+    if (m < 300) {                      // Level 1
       wMin = 70; wMax = 120; gap = 120; movers = 0;
-    } else if (m < 600) {               
+    } else if (m < 600) {               // smaller
       wMin = 40; wMax = 70;  gap = 128; movers = 0;
-    } else if (m < 1000) {              
+    } else if (m < 1000) {              // bigger gaps
       wMin = 50; wMax = 90;  gap = 145; movers = 0;
-    } else if (m < 1500) {              
+    } else if (m < 1500) {              // movers window
       wMin = 54; wMax = 92;  gap = 150; movers = 0.25;
-    } else if (m < 2000) {              
+    } else if (m < 2000) {              // tiny + big gaps + more movers
       wMin = 36; wMax = 64;  gap = 165; movers = 0.32;
-    } else if (m < 2700) {              
+    } else if (m < 2700) {              // breather
       wMin = 70; wMax = 120; gap = 120; movers = 0;
-    } else {                             
+    } else {                             // 2700–3000: brutal
       wMin = 28; wMax = 44;  gap = 185; movers = 0.40;
     }
 
@@ -363,11 +415,12 @@ function spawnAsNeeded(s){
     s.platforms.push(p);
     s.nextSpawnY = y;
 
+    // keep memory small: base + ~30 recent
     while (s.platforms.length > 32) s.platforms.splice(1,1);
   }
 }
 
-/* ================== DRAWING (no doubles) ================== */
+/* ================== DRAWING ================== */
 
 function drawBG(ctx, t){
   const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
@@ -396,21 +449,25 @@ function drawBG(ctx, t){
 function drawWorld(ctx, s){
   ctx.clearRect(0,0,W,H);
 
-  // platforms (SINGLE render per platform)
+  // platforms with camera
   for(const p of s.platforms){
     const yy = p.y - s.camY + H/2;
     if (yy < -40 || yy > H+40) continue;
-    const color = p.type==="base" ? "rgba(180,210,255,1.0)" : "rgba(160,190,255,0.95)";
+    const color = p.type==="base" ? "rgba(180,210,255,1.0)" : "rgba(160,190,255,0.9)";
     ctx.fillStyle = color;
-    roundRect(ctx, p.x, yy, p.w, p.h, 8); 
-    ctx.fill();
+    roundRect(ctx, p.x, yy, p.w, p.h, 8); ctx.fill();
+    if(p.type!=="base"){
+      ctx.fillStyle = "rgba(80,140,255,0.25)";  // soft shadow
+      roundRect(ctx, p.x, yy+12, p.w, 8, 6); ctx.fill();
+    }
   }
 
-  // player (SINGLE square, no glow layer)
+  // player with camera
   const px = s.player.x, py = s.player.y - s.camY + H/2, ps = s.player.size;
+  ctx.fillStyle = "rgba(120,200,255,.35)";
+  roundRect(ctx, px-6, py-6, ps+12, ps+12, 8); ctx.fill();
   ctx.fillStyle = "#ffffff";
-  roundRect(ctx, px, py, ps, ps, 6); 
-  ctx.fill();
+  roundRect(ctx, px, py, ps, ps, 6); ctx.fill();
 
   // charge ring on HUD
   if(s.input.spaceHeld || s.input.dragging){

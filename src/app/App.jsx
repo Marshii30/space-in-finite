@@ -50,6 +50,15 @@ export default function App() {
       )}
 
       <GameCanvas running={playing} muted={muted} onProgress={handleProgress} />
+
+      {/* ✅ Mobile Controls (only show on touch devices when playing) */}
+      {playing && (
+        <div className="mobile-controls">
+          <button id="btn-left">⬅️</button>
+          <button id="btn-jump">⬆️</button>
+          <button id="btn-right">➡️</button>
+        </div>
+      )}
     </>
   );
 }
