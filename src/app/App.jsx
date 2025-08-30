@@ -9,6 +9,7 @@ export default function App() {
   const [muted, setMuted] = useState(() => localStorage.getItem("muted") === "1");
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+  // Desktop: Space/Enter to start
   useEffect(() => {
     const onKey = (e) => {
       if (!playing && (e.code === "Space" || e.code === "Enter")) setPlaying(true);
@@ -16,6 +17,21 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [playing]);
+
+  // 🔧 Mobile: first tap anywhere starts the game (in case the modal is hidden or covered)
+  useEffect(() => {
+    if (playing) return;
+    const startOnTap = (e) => {
+      // ignore if Settings is open
+      if (!playing && !settingsOpen) {
+        e.preventDefault();
+        setPlaying(true);
+      }
+    };
+    // Use pointer events so it works on both iOS & Android
+    window.addEventListener("pointerdown", startOnTap, { passive: false });
+    return () => window.removeEventListener("pointerdown", startOnTap);
+  }, [playing, settingsOpen]);
 
   const handleProgress = (peak) => {
     setLastPeak(peak);
@@ -50,15 +66,6 @@ export default function App() {
       )}
 
       <GameCanvas running={playing} muted={muted} onProgress={handleProgress} />
-
-      {/* ✅ Mobile Controls (only show on touch devices when playing) */}
-      {playing && (
-        <div className="mobile-controls">
-          <button id="btn-left">⬅️</button>
-          <button id="btn-jump">⬆️</button>
-          <button id="btn-right">➡️</button>
-        </div>
-      )}
     </>
   );
 }
