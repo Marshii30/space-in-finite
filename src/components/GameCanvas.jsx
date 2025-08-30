@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 /* ---------- canvas size ---------- */
 const W = 480, H = 800;
@@ -14,21 +14,29 @@ const COYOTE = 0.16;
 const AIR_DAMP = 0.995;
 const NEAR_GROUND_TOL = 1.25;
 
-/* camera (unchanged except for offset you liked) */
+/* camera */
 const CAM_LAG = 0.06;
-const CAM_OFFSET = 230; // keep the square nicely visible
+const CAM_OFFSET = 230;
 
 export default function GameCanvas({ running, onProgress }) {
   const bgRef = useRef(null);
   const fgRef = useRef(null);
   const rafRef = useRef(0);
   const st = useRef(null);
-  const aliveRef = useRef(false);    // ensures only one RAF
-  const pausedRef = useRef(false);   // visibility pause state
+  const aliveRef = useRef(false);
+  const pausedRef = useRef(false);
 
-  // stable onProgress so we don't restart loop
+  const [isMobile, setIsMobile] = useState(false);
+
+  // stable onProgress
   const progRef = useRef(onProgress);
   useEffect(() => { progRef.current = onProgress; }, [onProgress]);
+
+  /* ---------- detect mobile ---------- */
+  useEffect(() => {
+    const mobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    setIsMobile(mobile);
+  }, []);
 
   /* ---------- bootstrap ---------- */
   useEffect(() => {
@@ -36,8 +44,17 @@ export default function GameCanvas({ running, onProgress }) {
       const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
       canvas.width = W * dpr;
       canvas.height = H * dpr;
-      canvas.style.width = W + "px";
-      canvas.style.height = H + "px";
+
+      // 🔹 scale canvas to fit mobile portrait
+      if (isMobile) {
+        const scale = Math.min(window.innerWidth / W, window.innerHeight / H);
+        canvas.style.width = W * scale + "px";
+        canvas.style.height = H * scale + "px";
+      } else {
+        canvas.style.width = W + "px";
+        canvas.style.height = H + "px";
+      }
+
       const ctx = canvas.getContext("2d", { alpha: true });
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       return ctx;
@@ -56,23 +73,21 @@ export default function GameCanvas({ running, onProgress }) {
     };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, []);
+  }, [isMobile]);
 
-  /* ---------- visibility / page lifecycle (mobile freeze fix) ---------- */
+  /* ---------- visibility / pause fix ---------- */
   useEffect(() => {
     const pause = () => { pausedRef.current = true; cancelAnimationFrame(rafRef.current); aliveRef.current = false; };
     const resume = () => {
-      if (!running) return;                 // only if game is supposed to run
-      if (aliveRef.current) return;         // already running
+      if (!running) return;
+      if (aliveRef.current) return;
       const s = st.current;
-      if (s) {                              // re-prime time so dt is small
-        s.last = performance.now() / 1000;
-      }
-      startLoop();                          // restart RAF
+      if (s) s.last = performance.now() / 1000;
+      startLoop();
     };
 
     const onVisibility = () => (document.hidden ? pause() : resume());
-    const onPageShow = () => resume();      // iOS Safari (app switch / back-forward cache)
+    const onPageShow = () => resume();
     const onPageHide = () => pause();
 
     document.addEventListener("visibilitychange", onVisibility);
@@ -88,7 +103,7 @@ export default function GameCanvas({ running, onProgress }) {
       window.removeEventListener("focus", resume);
       window.removeEventListener("blur", pause);
     };
-  }, [running]); // reacts when you hit Play/Stop
+  }, [running]);
 
   /* ---------- main loop ---------- */
   useEffect(() => {
@@ -96,13 +111,11 @@ export default function GameCanvas({ running, onProgress }) {
     aliveRef.current = false;
     if (!running) return;
 
-    // fresh run
     const bctx = bgRef.current.getContext("2d");
     const fctx = fgRef.current.getContext("2d");
     st.current = createWorld();
     drawWorld(fctx, st.current);
 
-    // kick the loop
     startLoop();
 
     function frame(nowMs) {
@@ -139,19 +152,18 @@ export default function GameCanvas({ running, onProgress }) {
     };
   }, [running]);
 
-  /* ---------- inputs (pointer + keyboard) ---------- */
+  /* ---------- inputs (drag + keyboard only) ---------- */
   useEffect(() => {
     const canvas = fgRef.current;
     if (!canvas) return;
 
-    // stop browser gestures/scroll while interacting with the game
     const oldTA = canvas.style.touchAction;
     const oldOGA = document.documentElement.style.overscrollBehavior;
     canvas.style.touchAction = "none";
     document.documentElement.style.overscrollBehavior = "none";
 
     let startX = 0, startY = 0;
-    let activePointer = null; // track one pointerId
+    let activePointer = null;
 
     const pointerDown = (e) => {
       const s = st.current; if (!s) return;
@@ -164,7 +176,6 @@ export default function GameCanvas({ running, onProgress }) {
       s.input.chargeStart = s.time;
       s.input.dx = 0; s.input.dy = 0;
     };
-
     const pointerMove = (e) => {
       const s = st.current; if (!s || !s.input.dragging) return;
       if (activePointer !== null && e.pointerId !== undefined && e.pointerId !== activePointer) return;
@@ -172,12 +183,10 @@ export default function GameCanvas({ running, onProgress }) {
       s.input.dx = e.clientX - startX;
       s.input.dy = e.clientY - startY;
     };
-
     const release = (e) => {
       const s = st.current;
       if (!s || !s.input.dragging) { activePointer = null; return; }
       if (activePointer !== null && e.pointerId !== undefined && e.pointerId !== activePointer) return;
-
       e.preventDefault();
       s.input.dragging = false;
 
@@ -187,9 +196,7 @@ export default function GameCanvas({ running, onProgress }) {
       const upBias  = Math.max(0, -s.input.dy) / Math.max(1, rect.height);
 
       const power = clamp(CHARGE_MIN + normLen*1.0 + upBias*0.7 + hold*0.3, CHARGE_MIN, CHARGE_MAX);
-      const dirX  = clamp(s.input.dx / (rect.width * 0.4), -1, 1);
-
-      s.input.wantJump = { power, dirX, at: s.time };
+      s.input.wantJump = { power, dirX: 0, at: s.time };
       activePointer = null;
       try { canvas.releasePointerCapture?.(e.pointerId); } catch (_) {}
     };
@@ -238,18 +245,30 @@ export default function GameCanvas({ running, onProgress }) {
     };
   }, []);
 
+  /* ---------- mobile buttons ---------- */
+  const moveLeft = () => { const s = st.current; if (s) s.input.left = 1; };
+  const stopLeft = () => { const s = st.current; if (s) s.input.left = 0; };
+  const moveRight = () => { const s = st.current; if (s) s.input.right = 1; };
+  const stopRight = () => { const s = st.current; if (s) s.input.right = 0; };
+
   return (
     <div className="game-wrap" style={{ touchAction: "none" }}>
       <div className="stage">
         <canvas ref={bgRef} width={W} height={H} style={{ pointerEvents: "none" }} />
         <canvas ref={fgRef} width={W} height={H} />
       </div>
+
+      {isMobile && (
+        <div className="mobile-controls">
+          <button onTouchStart={moveLeft} onTouchEnd={stopLeft}>⬅️</button>
+          <button onTouchStart={moveRight} onTouchEnd={stopRight}>➡️</button>
+        </div>
+      )}
     </div>
   );
 }
 
-/* ================== WORLD / PHYSICS (unchanged gameplay) ================== */
-
+/* ========== WORLD / PHYSICS ========== */
 function createWorld(){
   const s = {
     time: 0, last: 0,
@@ -257,27 +276,12 @@ function createWorld(){
     player: { x: W*0.5 - PLAYER.size/2, y: 0, vx:0, vy:0, size: PLAYER.size, onGround:true },
     lastGroundedAt: 0,
     peakY: Infinity,
-    input: {
-      left:0, right:0,
-      spaceHeld:false, spaceStart:0,
-      dragging:false, chargeStart:0, dx:0, dy:0,
-      wantJump: undefined,          // { power, dirX, at }
-    },
+    input: { left:0, right:0, spaceHeld:false, spaceStart:0, dragging:false, chargeStart:0, dx:0, dy:0, wantJump: undefined },
     platforms: [],
-    startY: 0,
-    nextSpawnY: 0,
-    maxMeters: 3000,
+    startY: 0, nextSpawnY: 0, maxMeters: 3000,
   };
-
-  // base
   s.platforms.push({ x:0, y:BASE_TOP, w:W, h:24, type:"base" });
-
-  // player on base
   s.player.y = BASE_TOP - s.player.size;
-  s.player.vx = 0; s.player.vy = 0; s.player.onGround = true;
-  s.lastGroundedAt = 0;
-
-  // initial platforms (static)
   let y = BASE_TOP - 130;
   for(let i=0;i<6;i++){
     const w = i<2 ? 120 : Math.max(70, 120 - i*10);
@@ -285,7 +289,6 @@ function createWorld(){
     s.platforms.push({ x, y, w, h:14, type:"plat", move: 0, phase: 0 });
     y -= 120;
   }
-
   s.startY = s.player.y;
   s.peakY  = s.player.y;
   s.camY   = s.player.y - CAM_OFFSET;
@@ -297,45 +300,31 @@ function performJump(s, powerNorm, dirX=0){
   const nearBase = (s.player.y + s.player.size) >= (BASE_TOP - NEAR_GROUND_TOL);
   const canJump = s.player.onGround || nearBase || (s.time - s.lastGroundedAt <= COYOTE);
   if(!canJump) return false;
-
-  if(nearBase) s.player.y = BASE_TOP - s.player.size - 0.5; // nudge off base
-
+  if(nearBase) s.player.y = BASE_TOP - s.player.size - 0.5;
   const p = clamp((powerNorm - CHARGE_MIN)/(CHARGE_MAX - CHARGE_MIN), 0, 1);
   s.player.vy = -lerp(JUMP_MIN, JUMP_MAX, p);
   s.player.vx = clamp(dirX, -1, 1) * 380;
   s.player.onGround = false;
-
   s.input.wantJump = undefined;
   return true;
 }
 
 function updateWorld(s, dt){
-  // queued jump
   if(s.input.wantJump){
     const ok = performJump(s, s.input.wantJump.power, s.input.wantJump.dirX);
     if(!ok && (s.time - s.input.wantJump.at) > 0.7){
       s.input.wantJump = undefined;
     }
   }
-
-  // steering
   const drift = (s.input.right - s.input.left);
   const targetVx = drift * PLAYER.airDrift;
-  if(!s.player.onGround){
-    s.player.vx += (targetVx - s.player.vx) * 0.12;
-    s.player.vx *= AIR_DAMP;
-  }else{
-    s.player.vx += (targetVx - s.player.vx) * 0.18;
-  }
-
-  // integrate
+  if(!s.player.onGround){ s.player.vx += (targetVx - s.player.vx) * 0.12; s.player.vx *= AIR_DAMP; }
+  else { s.player.vx += (targetVx - s.player.vx) * 0.18; }
   const prevY = s.player.y;
   s.player.vy += GRAV * dt;
   s.player.x  += s.player.vx * dt;
   s.player.y  += s.player.vy * dt;
   s.player.x   = Math.max(0, Math.min(W - s.player.size, s.player.x));
-
-  // collisions (falling)
   if(s.player.vy >= 0){
     const px = s.player.x, ps = s.player.size;
     const prevBottom = prevY + ps;
@@ -344,99 +333,55 @@ function updateWorld(s, dt){
       const top = pl.y;
       const horz = (px + ps > pl.x) && (px < pl.x + pl.w);
       const crossed = prevBottom <= top && currBottom >= top;
-      if(horz && crossed){
-        s.player.y = top - ps;
-        s.player.vy = 0;
-        s.player.onGround = true;
-        s.lastGroundedAt = s.time;
-        break;
-      }
+      if(horz && crossed){ s.player.y = top - ps; s.player.vy = 0; s.player.onGround = true; s.lastGroundedAt = s.time; break; }
     }
-  }else{
-    if(s.player.onGround) s.lastGroundedAt = s.time;
-    s.player.onGround = false;
-  }
-
-  // base clamp
+  }else{ if(s.player.onGround) s.lastGroundedAt = s.time; s.player.onGround = false; }
   const ps = s.player.size;
-  if(s.player.y + ps > BASE_TOP){
-    s.player.y = BASE_TOP - ps;
-    s.player.vy = 0;
-    s.player.onGround = true;
-    s.lastGroundedAt = s.time;
-  }
-
-  // peak & camera
+  if(s.player.y + ps > BASE_TOP){ s.player.y = BASE_TOP - ps; s.player.vy = 0; s.player.onGround = true; s.lastGroundedAt = s.time; }
   s.peakY = Math.min(s.peakY, s.player.y);
   const targetCam = s.player.y - CAM_OFFSET;
   s.camY += (targetCam - s.camY) * CAM_LAG;
-
-  // spawn as needed up to 3000 m (your difficulty curve preserved)
   spawnAsNeeded(s);
 }
 
-/* ---------- spawning with your difficulty tiers ---------- */
 function spawnAsNeeded(s){
   while (true) {
     const spawnedMeters = Math.max(0, Math.round((s.startY - s.nextSpawnY) / 10));
     if (spawnedMeters >= s.maxMeters) break;
-
     const highestY = Math.min(...s.platforms.map(p=>p.y));
     if (highestY < s.camY - 120) break;
-
     const m = spawnedMeters;
     let wMin=70, wMax=120, gap=120, movers=0;
-
-    if (m < 300) {                      // Level 1
-      wMin = 70; wMax = 120; gap = 120; movers = 0;
-    } else if (m < 600) {               // smaller
-      wMin = 40; wMax = 70;  gap = 128; movers = 0;
-    } else if (m < 1000) {              // bigger gaps
-      wMin = 50; wMax = 90;  gap = 145; movers = 0;
-    } else if (m < 1500) {              // movers window
-      wMin = 54; wMax = 92;  gap = 150; movers = 0.25;
-    } else if (m < 2000) {              // tiny + big gaps + more movers
-      wMin = 36; wMax = 64;  gap = 165; movers = 0.32;
-    } else if (m < 2700) {              // breather
-      wMin = 70; wMax = 120; gap = 120; movers = 0;
-    } else {                             // 2700–3000: brutal
-      wMin = 28; wMax = 44;  gap = 185; movers = 0.40;
-    }
-
+    if (m < 300) { wMin = 70; wMax = 120; gap = 120; movers = 0; }
+    else if (m < 600) { wMin = 40; wMax = 70;  gap = 128; movers = 0; }
+    else if (m < 1000) { wMin = 50; wMax = 90;  gap = 145; movers = 0; }
+    else if (m < 1500) { wMin = 54; wMax = 92;  gap = 150; movers = 0.25; }
+    else if (m < 2000) { wMin = 36; wMax = 64;  gap = 165; movers = 0.32; }
+    else if (m < 2700) { wMin = 70; wMax = 120; gap = 120; movers = 0; }
+    else { wMin = 28; wMax = 44;  gap = 185; movers = 0.40; }
     const width = Math.floor(wMin + Math.random()*(wMax - wMin));
     const x = 20 + Math.random()*(W - 40 - width);
     const y = s.nextSpawnY - gap;
-
     const p = { x, y, w: width, h: 14, type:"plat", move: 0, phase: 0 };
-    if (Math.random() < movers) {
-      p.move = 70 + Math.random()*90;
-      p.phase = Math.random()*6;
-    }
+    if (Math.random() < movers) { p.move = 70 + Math.random()*90; p.phase = Math.random()*6; }
     s.platforms.push(p);
     s.nextSpawnY = y;
-
-    // keep memory small: base + ~30 recent
     while (s.platforms.length > 32) s.platforms.splice(1,1);
   }
 }
-
-/* ================== DRAWING ================== */
 
 function drawBG(ctx, t){
   const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
   const Wv = ctx.canvas.width / dpr, Hv = ctx.canvas.height / dpr;
   ctx.clearRect(0,0,Wv,Hv);
-
   const g1 = ctx.createLinearGradient(0,0,0,Hv);
   g1.addColorStop(0,"#0b1222");
   g1.addColorStop(1,"#071422");
   ctx.fillStyle = g1; ctx.fillRect(0,0,Wv,Hv);
-
   const neb = ctx.createRadialGradient(Wv*0.5, Hv*0.85, 60, Wv*0.5, Hv*1.1, 600);
   neb.addColorStop(0,"rgba(35,120,255,0.10)");
   neb.addColorStop(1,"transparent");
   ctx.fillStyle = neb; ctx.fillRect(0,0,Wv,Hv);
-
   ctx.fillStyle = "rgba(255,255,255,.85)";
   for(let i=0;i<140;i++){
     const x = (i*73 + Math.sin(t*0.6 + i)*999) % Wv;
@@ -448,35 +393,24 @@ function drawBG(ctx, t){
 
 function drawWorld(ctx, s){
   ctx.clearRect(0,0,W,H);
-
-  // platforms with camera
   for(const p of s.platforms){
     const yy = p.y - s.camY + H/2;
     if (yy < -40 || yy > H+40) continue;
     const color = p.type==="base" ? "rgba(180,210,255,1.0)" : "rgba(160,190,255,0.9)";
     ctx.fillStyle = color;
     roundRect(ctx, p.x, yy, p.w, p.h, 8); ctx.fill();
-    if(p.type!=="base"){
-      ctx.fillStyle = "rgba(80,140,255,0.25)";  // soft shadow
-      roundRect(ctx, p.x, yy+12, p.w, 8, 6); ctx.fill();
-    }
+    if(p.type!=="base"){ ctx.fillStyle = "rgba(80,140,255,0.25)"; roundRect(ctx, p.x, yy+12, p.w, 8, 6); ctx.fill(); }
   }
-
-  // player with camera
   const px = s.player.x, py = s.player.y - s.camY + H/2, ps = s.player.size;
   ctx.fillStyle = "rgba(120,200,255,.35)";
   roundRect(ctx, px-6, py-6, ps+12, ps+12, 8); ctx.fill();
   ctx.fillStyle = "#ffffff";
   roundRect(ctx, px, py, ps, ps, 6); ctx.fill();
-
-  // charge ring on HUD
   if(s.input.spaceHeld || s.input.dragging){
     const held = s.input.spaceHeld ? (s.time - s.input.spaceStart) : (s.time - s.input.chargeStart);
     const t = clamp(held / CHARGE_MAX, 0, 1);
     drawRing(ctx, W/2, H-70, 34, t);
   }
-
-  // top-center meters
   const meters = Math.max(0, Math.round((s.startY - s.peakY)/10));
   ctx.fillStyle = "#cde6ff";
   ctx.font = "bold 18px Inter, system-ui";
@@ -493,7 +427,6 @@ function drawRing(ctx, cx, cy, r, t){
   ctx.globalAlpha = 1;
 }
 
-/* ================== utils ================== */
 function roundRect(ctx, x, y, w, h, r){
   const rr = Math.min(r, w/2, h/2);
   ctx.beginPath();
