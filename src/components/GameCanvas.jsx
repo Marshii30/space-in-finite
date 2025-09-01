@@ -18,7 +18,12 @@ const NEAR_GROUND_TOL = 1.25;
 const CAM_LAG = 0.06;
 const CAM_OFFSET = 230;
 
-export default function GameCanvas({ running, onProgress }) {
+/* ---------- sound file paths ---------- */
+const jumpSoundFile = "/sounds/jump.mp3";
+const landSoundFile = "/sounds/land.mp3";
+const defaultBgMusicFile = "/sounds/bg-music.mp3";
+
+export default function GameCanvas({ running, onProgress, muted, selectedSong }) {
   const bgRef = useRef(null);
   const fgRef = useRef(null);
   const rafRef = useRef(0);
@@ -28,9 +33,71 @@ export default function GameCanvas({ running, onProgress }) {
 
   const [isMobile, setIsMobile] = useState(false);
 
-  // stable onProgress
   const progRef = useRef(onProgress);
   useEffect(() => { progRef.current = onProgress; }, [onProgress]);
+
+  /* ---------- sounds ---------- */
+  const jumpSound = useRef(null);
+  const landSound = useRef(null);
+  const bgMusic = useRef(null);
+  const unlocked = useRef(false);
+
+  useEffect(() => {
+    jumpSound.current = new Audio(jumpSoundFile);
+    landSound.current = new Audio(landSoundFile);
+
+    // ✅ Use selectedSong if chosen, else fallback
+    const bgFile = selectedSong ? `/songs/${selectedSong}.mp3` : defaultBgMusicFile;
+    bgMusic.current = new Audio(bgFile);
+
+    if (bgMusic.current) {
+      if (selectedSong) {
+        bgMusic.current.loop = false; // song plays once
+      } else {
+        bgMusic.current.loop = true; // fallback loops
+      }
+      bgMusic.current.volume = 0.35;
+    }
+
+    const unlock = () => {
+      if (unlocked.current) return;
+      unlocked.current = true;
+      if (bgMusic.current && running && !muted) {
+        bgMusic.current.play().catch((err) => {
+          console.warn("Autoplay blocked:", err);
+        });
+      }
+    };
+
+    // ✅ Handle game over when song finishes
+    if (bgMusic.current && selectedSong) {
+      bgMusic.current.onended = () => {
+        const meters = Math.max(0, Math.round((st.current.startY - st.current.peakY) / 10));
+        const playerName = localStorage.getItem("lastPlayerName") || "Unknown";
+
+        // Save to leaderboard
+        const leaderboard = JSON.parse(localStorage.getItem("leaderboard") || "[]");
+        leaderboard.push({ name: playerName, score: meters });
+        leaderboard.sort((a, b) => b.score - a.score); // highest first
+        localStorage.setItem("leaderboard", JSON.stringify(leaderboard.slice(0, 10)));
+
+        alert("🎵 Game Over — Song Finished!");
+        window.location.reload(); // reset game
+      };
+    }
+
+    window.addEventListener("pointerdown", unlock, { once: true });
+    window.addEventListener("keydown", unlock, { once: true });
+
+    return () => {
+      if (bgMusic.current) {
+        bgMusic.current.pause();
+        bgMusic.current = null;
+      }
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, [running, muted, selectedSong]);
 
   /* ---------- detect mobile ---------- */
   useEffect(() => {
@@ -45,7 +112,6 @@ export default function GameCanvas({ running, onProgress }) {
       canvas.width = W * dpr;
       canvas.height = H * dpr;
 
-      // 🔹 scale canvas to fit mobile portrait
       if (isMobile) {
         const scale = Math.min(window.innerWidth / W, window.innerHeight / H);
         canvas.style.width = W * scale + "px";
@@ -62,13 +128,13 @@ export default function GameCanvas({ running, onProgress }) {
     const bctx = setup(bgRef.current);
     const fctx = setup(fgRef.current);
     st.current = createWorld();
-    drawBG(bctx, 0);
+    drawBG(bctx, 0, 0);
     drawWorld(fctx, st.current);
 
     const onResize = () => {
       setup(bgRef.current);
       setup(fgRef.current);
-      drawBG(bctx, st.current?.time || 0);
+      drawBG(bctx, st.current?.time || 0, 0);
       drawWorld(fctx, st.current);
     };
     window.addEventListener("resize", onResize);
@@ -127,11 +193,11 @@ export default function GameCanvas({ running, onProgress }) {
       const dt  = Math.min(0.033, now - s.last);
       s.last = now; s.time = now;
 
-      updateWorld(s, dt);
-      drawBG(bctx, now);
+      updateWorld(s, dt, jumpSound, landSound);
+      const meters = Math.max(0, Math.round((s.startY - s.peakY) / 10));
+      drawBG(bctx, now, meters);
       drawWorld(fctx, s);
 
-      const meters = Math.max(0, Math.round((s.startY - s.peakY) / 10));
       progRef.current?.(meters);
       const hud = document.getElementById("hud-score");
       if (hud) hud.innerHTML = `Height: <strong>${meters} m</strong>`;
@@ -197,6 +263,13 @@ export default function GameCanvas({ running, onProgress }) {
 
       const power = clamp(CHARGE_MIN + normLen*1.0 + upBias*0.7 + hold*0.3, CHARGE_MIN, CHARGE_MAX);
       s.input.wantJump = { power, dirX: 0, at: s.time };
+
+      // 🔊 play jump sound
+      if (jumpSound.current && !muted) {
+        jumpSound.current.currentTime = 0;
+        jumpSound.current.play().catch(()=>{});
+      }
+
       activePointer = null;
       try { canvas.releasePointerCapture?.(e.pointerId); } catch (_) {}
     };
@@ -206,7 +279,10 @@ export default function GameCanvas({ running, onProgress }) {
       if (e.code === "ArrowLeft"  || e.code === "KeyA") { s.input.left = 1; e.preventDefault(); }
       if (e.code === "ArrowRight" || e.code === "KeyD") { s.input.right = 1; e.preventDefault(); }
       if (e.code === "Space") {
-        if (!s.input.spaceHeld) { s.input.spaceHeld = true; s.input.spaceStart = s.time; }
+        if (!s.input.spaceHeld) { 
+          s.input.spaceHeld = true; 
+          s.input.spaceStart = s.time; 
+        }
         e.preventDefault();
       }
     };
@@ -219,6 +295,13 @@ export default function GameCanvas({ running, onProgress }) {
         const power = clamp(CHARGE_MIN + held, CHARGE_MIN, CHARGE_MAX);
         s.input.spaceHeld = false;
         s.input.wantJump = { power, dirX: 0, at: s.time };
+
+        // 🔊 play jump sound
+        if (jumpSound.current && !muted) {
+          jumpSound.current.currentTime = 0;
+          jumpSound.current.play().catch(()=>{});
+        }
+
         e.preventDefault();
       }
     };
@@ -243,9 +326,9 @@ export default function GameCanvas({ running, onProgress }) {
       canvas.style.touchAction = oldTA;
       document.documentElement.style.overscrollBehavior = oldOGA;
     };
-  }, []);
+  }, [muted]);
 
-  /* ---------- mobile buttons ---------- */
+  /* ---------- mobile button handlers ---------- */
   const moveLeft = () => { const s = st.current; if (s) s.input.left = 1; };
   const stopLeft = () => { const s = st.current; if (s) s.input.left = 0; };
   const moveRight = () => { const s = st.current; if (s) s.input.right = 1; };
@@ -309,7 +392,7 @@ function performJump(s, powerNorm, dirX=0){
   return true;
 }
 
-function updateWorld(s, dt){
+function updateWorld(s, dt, jumpSound, landSound){
   if(s.input.wantJump){
     const ok = performJump(s, s.input.wantJump.power, s.input.wantJump.dirX);
     if(!ok && (s.time - s.input.wantJump.at) > 0.7){
@@ -323,8 +406,8 @@ function updateWorld(s, dt){
   const prevY = s.player.y;
   s.player.vy += GRAV * dt;
   s.player.x  += s.player.vx * dt;
-  s.player.y  += s.player.vy * dt;
-  s.player.x   = Math.max(0, Math.min(W - s.player.size, s.player.x));
+  s.player.y  += s.player.vy * dt
+    s.player.x   = Math.max(0, Math.min(W - s.player.size, s.player.x));
   if(s.player.vy >= 0){
     const px = s.player.x, ps = s.player.size;
     const prevBottom = prevY + ps;
@@ -333,11 +416,35 @@ function updateWorld(s, dt){
       const top = pl.y;
       const horz = (px + ps > pl.x) && (px < pl.x + pl.w);
       const crossed = prevBottom <= top && currBottom >= top;
-      if(horz && crossed){ s.player.y = top - ps; s.player.vy = 0; s.player.onGround = true; s.lastGroundedAt = s.time; break; }
+      if(horz && crossed){ 
+        s.player.y = top - ps; 
+        s.player.vy = 0; 
+        if (!s.player.onGround && landSound?.current && !landSound.current.muted) {
+          landSound.current.currentTime = 0;
+          landSound.current.play().catch(()=>{});
+        }
+        s.player.onGround = true; 
+        s.lastGroundedAt = s.time; 
+        break; 
+      }
     }
-  }else{ if(s.player.onGround) s.lastGroundedAt = s.time; s.player.onGround = false; }
+  }else{ 
+    if(s.player.onGround) s.lastGroundedAt = s.time; 
+    s.player.onGround = false; 
+  }
+
   const ps = s.player.size;
-  if(s.player.y + ps > BASE_TOP){ s.player.y = BASE_TOP - ps; s.player.vy = 0; s.player.onGround = true; s.lastGroundedAt = s.time; }
+  if(s.player.y + ps > BASE_TOP){ 
+    s.player.y = BASE_TOP - ps; 
+    s.player.vy = 0; 
+    if (!s.player.onGround && landSound?.current && !landSound.current.muted) {
+      landSound.current.currentTime = 0;
+      landSound.current.play().catch(()=>{});
+    }
+    s.player.onGround = true; 
+    s.lastGroundedAt = s.time; 
+  }
+
   s.peakY = Math.min(s.peakY, s.player.y);
   const targetCam = s.player.y - CAM_OFFSET;
   s.camY += (targetCam - s.camY) * CAM_LAG;
@@ -353,12 +460,14 @@ function spawnAsNeeded(s){
     const m = spawnedMeters;
     let wMin=70, wMax=120, gap=120, movers=0;
     if (m < 300) { wMin = 70; wMax = 120; gap = 120; movers = 0; }
-    else if (m < 600) { wMin = 40; wMax = 70;  gap = 128; movers = 0; }
+    else if (m < 600) { wMin = 40; wMax = 70;  gap = 128; movers = 0.25; } // ✅ Added movers earlier
     else if (m < 1000) { wMin = 50; wMax = 90;  gap = 145; movers = 0; }
     else if (m < 1500) { wMin = 54; wMax = 92;  gap = 150; movers = 0.25; }
     else if (m < 2000) { wMin = 36; wMax = 64;  gap = 165; movers = 0.32; }
+    else if (m < 2250) { wMin = 36; wMax = 64;  gap = 170; movers = 0.55; } 
     else if (m < 2700) { wMin = 70; wMax = 120; gap = 120; movers = 0; }
-    else { wMin = 28; wMax = 44;  gap = 185; movers = 0.40; }
+    else { wMin = 20; wMax = 32;  gap = 190; movers = 0.45; }
+
     const width = Math.floor(wMin + Math.random()*(wMax - wMin));
     const x = 20 + Math.random()*(W - 40 - width);
     const y = s.nextSpawnY - gap;
@@ -370,29 +479,46 @@ function spawnAsNeeded(s){
   }
 }
 
-function drawBG(ctx, t){
+function drawBG(ctx, t, meters){
   const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
   const Wv = ctx.canvas.width / dpr, Hv = ctx.canvas.height / dpr;
   ctx.clearRect(0,0,Wv,Hv);
+
   const g1 = ctx.createLinearGradient(0,0,0,Hv);
   g1.addColorStop(0,"#0b1222");
   g1.addColorStop(1,"#071422");
   ctx.fillStyle = g1; ctx.fillRect(0,0,Wv,Hv);
-  const neb = ctx.createRadialGradient(Wv*0.5, Hv*0.85, 60, Wv*0.5, Hv*1.1, 600);
-  neb.addColorStop(0,"rgba(35,120,255,0.10)");
-  neb.addColorStop(1,"transparent");
-  ctx.fillStyle = neb; ctx.fillRect(0,0,Wv,Hv);
-  ctx.fillStyle = "rgba(255,255,255,.85)";
-  for(let i=0;i<140;i++){
-    const x = (i*73 + Math.sin(t*0.6 + i)*999) % Wv;
-    const y = (i*89 + Math.cos(t*0.5 + i)*777) % Hv;
-    const r = i%17===0 ? 2 : 1;
-    ctx.fillRect(x,y,r,r);
+
+  if (meters < 1000) {
+    const neb = ctx.createRadialGradient(Wv*0.5, Hv*0.85, 60, Wv*0.5, Hv*1.1, 600);
+    neb.addColorStop(0,"rgba(35,120,255,0.12)");
+    neb.addColorStop(1,"transparent");
+    ctx.fillStyle = neb; ctx.fillRect(0,0,Wv,Hv);
+  } else if (meters < 2000) {
+    ctx.fillStyle = "rgba(255,255,255,.85)";
+    for(let i=0;i<120;i++){
+      const x = (i*59 + Math.sin(t*0.3 + i)*500) % Wv;
+      const y = (i*71 + Math.cos(t*0.27 + i)*600) % Hv;
+      const r = (i%15===0) ? 2 : 1;
+      ctx.fillRect(x,y,r,r);
+    }
+  } else if (meters < 2700) {
+    const solar = ctx.createRadialGradient(Wv*0.5, Hv*0.2, 40, Wv*0.5, Hv*0.2, 500);
+    solar.addColorStop(0,"rgba(255,200,120,0.12)");
+    solar.addColorStop(1,"transparent");
+    ctx.fillStyle = solar; ctx.fillRect(0,0,Wv,Hv);
+  } else {
+    const sun = ctx.createRadialGradient(Wv*0.5, Hv*0.5, 60, Wv*0.5, Hv*0.5, 600);
+    sun.addColorStop(0,"rgba(255,230,120,0.95)");
+    sun.addColorStop(0.3,"rgba(255,150,50,0.75)");
+    sun.addColorStop(1,"transparent");
+    ctx.fillStyle = sun; ctx.fillRect(0,0,Wv,Hv);
   }
 }
 
 function drawWorld(ctx, s){
   ctx.clearRect(0,0,W,H);
+
   for(const p of s.platforms){
     const yy = p.y - s.camY + H/2;
     if (yy < -40 || yy > H+40) continue;
@@ -401,16 +527,19 @@ function drawWorld(ctx, s){
     roundRect(ctx, p.x, yy, p.w, p.h, 8); ctx.fill();
     if(p.type!=="base"){ ctx.fillStyle = "rgba(80,140,255,0.25)"; roundRect(ctx, p.x, yy+12, p.w, 8, 6); ctx.fill(); }
   }
+
   const px = s.player.x, py = s.player.y - s.camY + H/2, ps = s.player.size;
   ctx.fillStyle = "rgba(120,200,255,.35)";
   roundRect(ctx, px-6, py-6, ps+12, ps+12, 8); ctx.fill();
   ctx.fillStyle = "#ffffff";
   roundRect(ctx, px, py, ps, ps, 6); ctx.fill();
+
   if(s.input.spaceHeld || s.input.dragging){
     const held = s.input.spaceHeld ? (s.time - s.input.spaceStart) : (s.time - s.input.chargeStart);
     const t = clamp(held / CHARGE_MAX, 0, 1);
     drawRing(ctx, W/2, H-70, 34, t);
   }
+
   const meters = Math.max(0, Math.round((s.startY - s.peakY)/10));
   ctx.fillStyle = "#cde6ff";
   ctx.font = "bold 18px Inter, system-ui";
@@ -441,5 +570,7 @@ function roundRect(ctx, x, y, w, h, r){
   ctx.quadraticCurveTo(x, y, x+rr, y);
   ctx.closePath();
 }
+
 function lerp(a,b,t){ return a + (b-a)*t; }
 function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+

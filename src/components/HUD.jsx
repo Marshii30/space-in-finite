@@ -1,11 +1,21 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 
 /**
  * Heads-Up Display
  * - Center-top "Height: 0 m" chip (updated by GameCanvas).
  * - Settings button (top-right) -> modal with Mute + Home.
+ * - ✅ New: Leaderboard modal.
  */
 export default function HUD({ open, setOpen, muted, setMuted, onHome }) {
+  const [leaderboardOpen, setLeaderboardOpen] = useState(false);
+  const [leaderboard, setLeaderboard] = useState([]);
+
+  // Load leaderboard from localStorage
+  useEffect(() => {
+    const stored = JSON.parse(localStorage.getItem("leaderboard") || "[]");
+    setLeaderboard(stored);
+  }, [leaderboardOpen]);
+
   return (
     <>
       {/* Center-top score */}
@@ -43,14 +53,54 @@ export default function HUD({ open, setOpen, muted, setMuted, onHome }) {
               <button className="btn" onClick={() => setMuted(!muted)}>
                 {muted ? "🔈 Unmute" : "🔇 Mute"}
               </button>
-              <button className="btn" onClick={() => { setOpen(false); onHome?.(); }}>
+              <button
+                className="btn"
+                onClick={() => {
+                  setLeaderboardOpen(true);
+                  setOpen(false);
+                }}
+              >
+                🏆 Leaderboard
+              </button>
+              <button
+                className="btn"
+                onClick={() => {
+                  setOpen(false);
+                  onHome?.();
+                }}
+              >
                 🏠 Home / Menu
               </button>
-              <button className="btn" onClick={() => setOpen(false)}>Close</button>
+              <button className="btn" onClick={() => setOpen(false)}>
+                Close
+              </button>
             </div>
-            <p className="tiny" style={{ opacity: .8 }}>
+            <p className="tiny" style={{ opacity: 0.8 }}>
               Tip: You can return to Home anytime without losing your best score.
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* Leaderboard modal */}
+      {leaderboardOpen && (
+        <div className="modal-wrap" style={{ zIndex: 50 }}>
+          <div className="modal" style={{ width: "min(420px,92vw)", textAlign: "center" }}>
+            <h2 style={{ marginTop: 0 }}>🏆 Leaderboard</h2>
+            {leaderboard.length === 0 ? (
+              <p>No scores recorded yet.</p>
+            ) : (
+              <ul style={{ listStyle: "none", padding: 0, margin: "12px 0", textAlign: "left" }}>
+                {leaderboard.map((entry, i) => (
+                  <li key={i} style={{ margin: "6px 0", fontSize: "15px" }}>
+                    <strong>{entry.name}</strong> ({entry.age}) — {entry.score} m
+                  </li>
+                ))}
+              </ul>
+            )}
+            <button className="btn" onClick={() => setLeaderboardOpen(false)}>
+              Close
+            </button>
           </div>
         </div>
       )}
