@@ -1,20 +1,13 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 
 /**
  * Heads-Up Display
  * - Center-top "Height: 0 m" chip (updated by GameCanvas).
  * - Settings button (top-right) -> modal with Mute + Home.
- * - ✅ New: Leaderboard modal.
+ * - ✅ Leaderboard option (new).
  */
-export default function HUD({ open, setOpen, muted, setMuted, onHome }) {
-  const [leaderboardOpen, setLeaderboardOpen] = useState(false);
-  const [leaderboard, setLeaderboard] = useState([]);
-
-  // Load leaderboard from localStorage
-  useEffect(() => {
-    const stored = JSON.parse(localStorage.getItem("leaderboard") || "[]");
-    setLeaderboard(stored);
-  }, [leaderboardOpen]);
+export default function HUD({ open, setOpen, muted, setMuted, onHome, leaderboard }) {
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
 
   return (
     <>
@@ -45,6 +38,7 @@ export default function HUD({ open, setOpen, muted, setMuted, onHome }) {
         </button>
       </div>
 
+      {/* Settings modal */}
       {open && (
         <div className="modal-wrap" style={{ zIndex: 40 }}>
           <div className="modal" style={{ width: "min(420px,92vw)", textAlign: "center" }}>
@@ -56,7 +50,7 @@ export default function HUD({ open, setOpen, muted, setMuted, onHome }) {
               <button
                 className="btn"
                 onClick={() => {
-                  setLeaderboardOpen(true);
+                  setShowLeaderboard(true);
                   setOpen(false);
                 }}
               >
@@ -83,22 +77,34 @@ export default function HUD({ open, setOpen, muted, setMuted, onHome }) {
       )}
 
       {/* Leaderboard modal */}
-      {leaderboardOpen && (
+      {showLeaderboard && (
         <div className="modal-wrap" style={{ zIndex: 50 }}>
-          <div className="modal" style={{ width: "min(420px,92vw)", textAlign: "center" }}>
+          <div
+            className="modal"
+            style={{
+              width: "min(480px,92vw)",
+              textAlign: "center",
+              maxHeight: "80vh",
+              overflowY: "auto",
+            }}
+          >
             <h2 style={{ marginTop: 0 }}>🏆 Leaderboard</h2>
-            {leaderboard.length === 0 ? (
-              <p>No scores recorded yet.</p>
-            ) : (
-              <ul style={{ listStyle: "none", padding: 0, margin: "12px 0", textAlign: "left" }}>
-                {leaderboard.map((entry, i) => (
-                  <li key={i} style={{ margin: "6px 0", fontSize: "15px" }}>
-                    <strong>{entry.name}</strong> ({entry.age}) — {entry.score} m
+            {leaderboard && leaderboard.length > 0 ? (
+              <ol style={{ textAlign: "left", margin: "10px auto", padding: "0 20px" }}>
+                {leaderboard.map((entry, idx) => (
+                  <li key={idx} style={{ margin: "6px 0" }}>
+                    <strong>{entry.name}</strong> — {entry.score} m
                   </li>
                 ))}
-              </ul>
+              </ol>
+            ) : (
+              <p style={{ opacity: 0.8 }}>No scores yet. Be the first!</p>
             )}
-            <button className="btn" onClick={() => setLeaderboardOpen(false)}>
+            <button
+              className="btn"
+              style={{ marginTop: "14px" }}
+              onClick={() => setShowLeaderboard(false)}
+            >
               Close
             </button>
           </div>

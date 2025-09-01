@@ -47,18 +47,6 @@ export default function App() {
     }
   };
 
-  // Save leaderboard entry when run ends
-  const saveLeaderboardRecord = () => {
-    if (!name || !age || lastPeak <= 0) return;
-    const stored = JSON.parse(localStorage.getItem("leaderboard") || "[]");
-    stored.push({ name, age, score: lastPeak });
-    // sort by score descending
-    stored.sort((a, b) => b.score - a.score);
-    // keep top 10
-    const top = stored.slice(0, 10);
-    localStorage.setItem("leaderboard", JSON.stringify(top));
-  };
-
   // handle login
   const handleLogin = () => {
     if (!name || !age) return;
@@ -71,13 +59,6 @@ export default function App() {
     setStage("game");        // 🚀 don’t setPlaying yet (wait for modal Play)
     alert("🎵 REACH 3000M BEFORE THE SONG ENDS!");
   };
-
-  // when leaving game, save leaderboard
-  useEffect(() => {
-    if (!playing && stage === "game" && lastPeak > 0) {
-      saveLeaderboardRecord();
-    }
-  }, [playing, stage, lastPeak]);
 
   return (
     <>
@@ -100,7 +81,7 @@ export default function App() {
       {stage === "login" && (
         <div className="login-screen">
           <div className="login-box">
-            <h2>HEY SPACE EXPLORER👨‍🚀🚀</h2>
+            <h2>🚀 Enter Space Challenge</h2>
             <input
               placeholder="Your Name"
               value={name}
@@ -143,7 +124,17 @@ export default function App() {
         <>
           {!playing && (
             <div className="modal-wrap">
-              <div className="modal">
+              <div
+                className="modal"
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  textAlign: "center",
+                  padding: "30px",
+                }}
+              >
                 <h1 style={{ marginTop: 0 }}>🚀 Space in-Finite</h1>
                 <p style={{ opacity: 0.85, margin: "6px 0 2px" }}>
                   Highest: <strong>{best} m</strong>
@@ -153,11 +144,19 @@ export default function App() {
                     Last run peak: {lastPeak} m
                   </p>
                 )}
-                <p className="tiny" style={{ marginBottom: 14 }}>
+                <p className="tiny" style={{ marginBottom: 20 }}>
                   Hold & release <kbd>Space</kbd> or drag anywhere then release to jump. ← / → to steer.
                 </p>
-                <button className="btn" onClick={() => setPlaying(true)}>
-                  Play
+                <button
+                  className="btn"
+                  style={{
+                    fontSize: "20px",
+                    padding: "14px 28px",
+                    borderRadius: "12px",
+                  }}
+                  onClick={() => setPlaying(true)}
+                >
+                  ▶ Play
                 </button>
               </div>
             </div>

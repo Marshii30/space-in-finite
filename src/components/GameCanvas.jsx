@@ -46,45 +46,27 @@ export default function GameCanvas({ running, onProgress, muted, selectedSong })
     jumpSound.current = new Audio(jumpSoundFile);
     landSound.current = new Audio(landSoundFile);
 
-    // ✅ Use selectedSong if chosen, else fallback
+    // ✅ Pick selectedSong or fallback bg music
     const bgFile = selectedSong ? `/songs/${selectedSong}.mp3` : defaultBgMusicFile;
     bgMusic.current = new Audio(bgFile);
 
     if (bgMusic.current) {
-      if (selectedSong) {
-        bgMusic.current.loop = false; // song plays once
-      } else {
-        bgMusic.current.loop = true; // fallback loops
-      }
+      bgMusic.current.loop = false; // ✅ play once, stop at end
       bgMusic.current.volume = 0.35;
+      bgMusic.current.onended = () => {
+        alert("🎵 Game Over! The song has ended.");
+        window.location.reload(); // reset back to login
+      };
     }
 
+    // 🔓 Unlock and play music only once
     const unlock = () => {
       if (unlocked.current) return;
       unlocked.current = true;
       if (bgMusic.current && running && !muted) {
-        bgMusic.current.play().catch((err) => {
-          console.warn("Autoplay blocked:", err);
-        });
+        bgMusic.current.play().catch(() => {});
       }
     };
-
-    // ✅ Handle game over when song finishes
-    if (bgMusic.current && selectedSong) {
-      bgMusic.current.onended = () => {
-        const meters = Math.max(0, Math.round((st.current.startY - st.current.peakY) / 10));
-        const playerName = localStorage.getItem("lastPlayerName") || "Unknown";
-
-        // Save to leaderboard
-        const leaderboard = JSON.parse(localStorage.getItem("leaderboard") || "[]");
-        leaderboard.push({ name: playerName, score: meters });
-        leaderboard.sort((a, b) => b.score - a.score); // highest first
-        localStorage.setItem("leaderboard", JSON.stringify(leaderboard.slice(0, 10)));
-
-        alert("🎵 Game Over — Song Finished!");
-        window.location.reload(); // reset game
-      };
-    }
 
     window.addEventListener("pointerdown", unlock, { once: true });
     window.addEventListener("keydown", unlock, { once: true });
@@ -96,6 +78,7 @@ export default function GameCanvas({ running, onProgress, muted, selectedSong })
       }
       window.removeEventListener("pointerdown", unlock);
       window.removeEventListener("keydown", unlock);
+      unlocked.current = false; // reset unlock when unmounted
     };
   }, [running, muted, selectedSong]);
 
@@ -406,8 +389,8 @@ function updateWorld(s, dt, jumpSound, landSound){
   const prevY = s.player.y;
   s.player.vy += GRAV * dt;
   s.player.x  += s.player.vx * dt;
-  s.player.y  += s.player.vy * dt
-    s.player.x   = Math.max(0, Math.min(W - s.player.size, s.player.x));
+  s.player.y  += s.player.vy * dt;
+  s.player.x   = Math.max(0, Math.min(W - s.player.size, s.player.x));
   if(s.player.vy >= 0){
     const px = s.player.x, ps = s.player.size;
     const prevBottom = prevY + ps;
@@ -419,7 +402,7 @@ function updateWorld(s, dt, jumpSound, landSound){
       if(horz && crossed){ 
         s.player.y = top - ps; 
         s.player.vy = 0; 
-        if (!s.player.onGround && landSound?.current && !landSound.current.muted) {
+        if (!s.player.onGround && landSound?.current) {
           landSound.current.currentTime = 0;
           landSound.current.play().catch(()=>{});
         }
@@ -428,23 +411,18 @@ function updateWorld(s, dt, jumpSound, landSound){
         break; 
       }
     }
-  }else{ 
-    if(s.player.onGround) s.lastGroundedAt = s.time; 
-    s.player.onGround = false; 
-  }
-
+  }else{ if(s.player.onGround) s.lastGroundedAt = s.time; s.player.onGround = false; }
   const ps = s.player.size;
   if(s.player.y + ps > BASE_TOP){ 
     s.player.y = BASE_TOP - ps; 
     s.player.vy = 0; 
-    if (!s.player.onGround && landSound?.current && !landSound.current.muted) {
+    if (!s.player.onGround && landSound?.current) {
       landSound.current.currentTime = 0;
       landSound.current.play().catch(()=>{});
     }
     s.player.onGround = true; 
     s.lastGroundedAt = s.time; 
   }
-
   s.peakY = Math.min(s.peakY, s.player.y);
   const targetCam = s.player.y - CAM_OFFSET;
   s.camY += (targetCam - s.camY) * CAM_LAG;
@@ -460,7 +438,7 @@ function spawnAsNeeded(s){
     const m = spawnedMeters;
     let wMin=70, wMax=120, gap=120, movers=0;
     if (m < 300) { wMin = 70; wMax = 120; gap = 120; movers = 0; }
-    else if (m < 600) { wMin = 40; wMax = 70;  gap = 128; movers = 0.25; } // ✅ Added movers earlier
+    else if (m < 600) { wMin = 40; wMax = 70;  gap = 128; movers = 0.25; } // ✅ added movers between 300-600
     else if (m < 1000) { wMin = 50; wMax = 90;  gap = 145; movers = 0; }
     else if (m < 1500) { wMin = 54; wMax = 92;  gap = 150; movers = 0.25; }
     else if (m < 2000) { wMin = 36; wMax = 64;  gap = 165; movers = 0.32; }
@@ -518,7 +496,6 @@ function drawBG(ctx, t, meters){
 
 function drawWorld(ctx, s){
   ctx.clearRect(0,0,W,H);
-
   for(const p of s.platforms){
     const yy = p.y - s.camY + H/2;
     if (yy < -40 || yy > H+40) continue;
@@ -526,20 +503,21 @@ function drawWorld(ctx, s){
     ctx.fillStyle = color;
     roundRect(ctx, p.x, yy, p.w, p.h, 8); ctx.fill();
     if(p.type!=="base"){ ctx.fillStyle = "rgba(80,140,255,0.25)"; roundRect(ctx, p.x, yy+12, p.w, 8, 6); ctx.fill(); }
+    // ✅ draw moving platforms if move > 0
+    if (p.move) {
+      p.x += Math.sin(s.time + p.phase) * 0.8;
+    }
   }
-
   const px = s.player.x, py = s.player.y - s.camY + H/2, ps = s.player.size;
   ctx.fillStyle = "rgba(120,200,255,.35)";
   roundRect(ctx, px-6, py-6, ps+12, ps+12, 8); ctx.fill();
   ctx.fillStyle = "#ffffff";
   roundRect(ctx, px, py, ps, ps, 6); ctx.fill();
-
   if(s.input.spaceHeld || s.input.dragging){
     const held = s.input.spaceHeld ? (s.time - s.input.spaceStart) : (s.time - s.input.chargeStart);
     const t = clamp(held / CHARGE_MAX, 0, 1);
     drawRing(ctx, W/2, H-70, 34, t);
   }
-
   const meters = Math.max(0, Math.round((s.startY - s.peakY)/10));
   ctx.fillStyle = "#cde6ff";
   ctx.font = "bold 18px Inter, system-ui";
@@ -570,7 +548,5 @@ function roundRect(ctx, x, y, w, h, r){
   ctx.quadraticCurveTo(x, y, x+rr, y);
   ctx.closePath();
 }
-
 function lerp(a,b,t){ return a + (b-a)*t; }
 function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
-
