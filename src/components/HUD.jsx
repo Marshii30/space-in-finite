@@ -1,13 +1,34 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { db } from "../firebase"; // ✅ Firebase instance
+import { collection, query, orderBy, limit, getDocs } from "firebase/firestore";
 
 /**
  * Heads-Up Display
  * - Center-top "Height: 0 m" chip (updated by GameCanvas).
- * - Settings button (top-right) -> modal with Mute + Home.
- * - ✅ Leaderboard option (new).
+ * - Settings button (top-right) -> modal with Mute + Home + Leaderboard.
  */
-export default function HUD({ open, setOpen, muted, setMuted, onHome, leaderboard }) {
-  const [showLeaderboard, setShowLeaderboard] = useState(false);
+export default function HUD({ open, setOpen, muted, setMuted, onHome }) {
+  const [leaderboardOpen, setLeaderboardOpen] = useState(false);
+  const [scores, setScores] = useState([]);
+
+  // ✅ Fetch leaderboard when opened
+  useEffect(() => {
+    const fetchLeaderboard = async () => {
+      try {
+        const q = query(
+          collection(db, "leaderboard"),
+          orderBy("score", "desc"),
+          limit(10)
+        );
+        const snap = await getDocs(q);
+        const list = snap.docs.map((doc) => doc.data());
+        setScores(list);
+      } catch (err) {
+        console.error("Error loading leaderboard:", err);
+      }
+    };
+    if (leaderboardOpen) fetchLeaderboard();
+  }, [leaderboardOpen]);
 
   return (
     <>
@@ -33,15 +54,22 @@ export default function HUD({ open, setOpen, muted, setMuted, onHome, leaderboar
 
       {/* Settings button */}
       <div style={{ position: "fixed", top: 10, right: 10, zIndex: 30 }}>
-        <button className="btn" style={{ padding: "8px 12px" }} onClick={() => setOpen(true)}>
+        <button
+          className="btn"
+          style={{ padding: "8px 12px" }}
+          onClick={() => setOpen(true)}
+        >
           ⚙️ Settings
         </button>
       </div>
 
-      {/* Settings modal */}
+      {/* Settings Modal */}
       {open && (
         <div className="modal-wrap" style={{ zIndex: 40 }}>
-          <div className="modal" style={{ width: "min(420px,92vw)", textAlign: "center" }}>
+          <div
+            className="modal"
+            style={{ width: "min(420px,92vw)", textAlign: "center" }}
+          >
             <h2 style={{ marginTop: 0 }}>Settings</h2>
             <div style={{ display: "grid", gap: 10, margin: "14px 0 16px" }}>
               <button className="btn" onClick={() => setMuted(!muted)}>
@@ -49,10 +77,7 @@ export default function HUD({ open, setOpen, muted, setMuted, onHome, leaderboar
               </button>
               <button
                 className="btn"
-                onClick={() => {
-                  setShowLeaderboard(true);
-                  setOpen(false);
-                }}
+                onClick={() => setLeaderboardOpen(true)}
               >
                 🏆 Leaderboard
               </button>
@@ -76,34 +101,31 @@ export default function HUD({ open, setOpen, muted, setMuted, onHome, leaderboar
         </div>
       )}
 
-      {/* Leaderboard modal */}
-      {showLeaderboard && (
+      {/* ✅ Leaderboard Modal */}
+      {leaderboardOpen && (
         <div className="modal-wrap" style={{ zIndex: 50 }}>
           <div
             className="modal"
-            style={{
-              width: "min(480px,92vw)",
-              textAlign: "center",
-              maxHeight: "80vh",
-              overflowY: "auto",
-            }}
+            style={{ width: "min(420px,92vw)", textAlign: "center" }}
           >
             <h2 style={{ marginTop: 0 }}>🏆 Leaderboard</h2>
-            {leaderboard && leaderboard.length > 0 ? (
-              <ol style={{ textAlign: "left", margin: "10px auto", padding: "0 20px" }}>
-                {leaderboard.map((entry, idx) => (
-                  <li key={idx} style={{ margin: "6px 0" }}>
-                    <strong>{entry.name}</strong> — {entry.score} m
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <p style={{ opacity: 0.8 }}>No scores yet. Be the first!</p>
+            {scores.length === 0 && (
+              <p style={{ opacity: 0.8 }}>No scores yet...</p>
             )}
+            <ul style={{ listStyle: "none", padding: 0, margin: "12px 0" }}>
+              {scores.map((s, i) => (
+                <li
+                  key={i}
+                  style={{ marginBottom: 6, fontWeight: 600 }}
+                >
+                  {i + 1}. {s.name} —{" "}
+                  <span style={{ color: "#58ccff" }}>{s.score} m</span>
+                </li>
+              ))}
+            </ul>
             <button
               className="btn"
-              style={{ marginTop: "14px" }}
-              onClick={() => setShowLeaderboard(false)}
+              onClick={() => setLeaderboardOpen(false)}
             >
               Close
             </button>

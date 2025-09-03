@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
+import { db } from "../firebase"; // ✅ Firebase
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
 /* ---------- canvas size ---------- */
 const W = 480, H = 800;
@@ -23,7 +25,7 @@ const jumpSoundFile = "/sounds/jump.mp3";
 const landSoundFile = "/sounds/land.mp3";
 const defaultBgMusicFile = "/sounds/bg-music.mp3";
 
-export default function GameCanvas({ running, onProgress, muted, selectedSong }) {
+export default function GameCanvas({ running, onProgress, muted, selectedSong, playerName }) {
   const bgRef = useRef(null);
   const fgRef = useRef(null);
   const rafRef = useRef(0);
@@ -46,20 +48,44 @@ export default function GameCanvas({ running, onProgress, muted, selectedSong })
     jumpSound.current = new Audio(jumpSoundFile);
     landSound.current = new Audio(landSoundFile);
 
-    // ✅ Pick selectedSong or fallback bg music
+    // ✅ Use selectedSong if chosen, else fallback
     const bgFile = selectedSong ? `/songs/${selectedSong}.mp3` : defaultBgMusicFile;
     bgMusic.current = new Audio(bgFile);
 
     if (bgMusic.current) {
-      bgMusic.current.loop = false; // ✅ play once, stop at end
+      bgMusic.current.loop = !selectedSong; // ✅ Only loop default bg music
       bgMusic.current.volume = 0.35;
-      bgMusic.current.onended = () => {
-        alert("🎵 Game Over! The song has ended.");
-        window.location.reload(); // reset back to login
-      };
+
+      // ✅ Detect when song ends (only if user chose one)
+      if (selectedSong) {
+        bgMusic.current.onended = async () => {
+          // Stop game when song ends
+          cancelAnimationFrame(rafRef.current);
+          aliveRef.current = false;
+          alert("🎵 Game Over! The song has ended.");
+
+          // Save score to leaderboard
+          const meters = st.current
+            ? Math.max(0, Math.round((st.current.startY - st.current.peakY) / 10))
+            : 0;
+          try {
+            if (playerName) {
+              await addDoc(collection(db, "leaderboard"), {
+                name: playerName,
+                score: meters,
+                timestamp: serverTimestamp(),
+              });
+              console.log("✅ Score saved to leaderboard!");
+            }
+          } catch (err) {
+            console.error("❌ Error saving score:", err);
+          }
+
+          window.location.reload(); // ✅ Reset to login page
+        };
+      }
     }
 
-    // 🔓 Unlock and play music only once
     const unlock = () => {
       if (unlocked.current) return;
       unlocked.current = true;
@@ -78,9 +104,8 @@ export default function GameCanvas({ running, onProgress, muted, selectedSong })
       }
       window.removeEventListener("pointerdown", unlock);
       window.removeEventListener("keydown", unlock);
-      unlocked.current = false; // reset unlock when unmounted
     };
-  }, [running, muted, selectedSong]);
+  }, [running, muted, selectedSong, playerName]);
 
   /* ---------- detect mobile ---------- */
   useEffect(() => {
@@ -176,7 +201,7 @@ export default function GameCanvas({ running, onProgress, muted, selectedSong })
       const dt  = Math.min(0.033, now - s.last);
       s.last = now; s.time = now;
 
-      updateWorld(s, dt, jumpSound, landSound);
+      updateWorld(s, dt, jumpSound, landSound, muted);
       const meters = Math.max(0, Math.round((s.startY - s.peakY) / 10));
       drawBG(bctx, now, meters);
       drawWorld(fctx, s);
@@ -199,7 +224,7 @@ export default function GameCanvas({ running, onProgress, muted, selectedSong })
       cancelAnimationFrame(rafRef.current);
       aliveRef.current = false;
     };
-  }, [running]);
+  }, [running, muted]);
 
   /* ---------- inputs (drag + keyboard only) ---------- */
   useEffect(() => {
@@ -247,7 +272,6 @@ export default function GameCanvas({ running, onProgress, muted, selectedSong })
       const power = clamp(CHARGE_MIN + normLen*1.0 + upBias*0.7 + hold*0.3, CHARGE_MIN, CHARGE_MAX);
       s.input.wantJump = { power, dirX: 0, at: s.time };
 
-      // 🔊 play jump sound
       if (jumpSound.current && !muted) {
         jumpSound.current.currentTime = 0;
         jumpSound.current.play().catch(()=>{});
@@ -279,7 +303,6 @@ export default function GameCanvas({ running, onProgress, muted, selectedSong })
         s.input.spaceHeld = false;
         s.input.wantJump = { power, dirX: 0, at: s.time };
 
-        // 🔊 play jump sound
         if (jumpSound.current && !muted) {
           jumpSound.current.currentTime = 0;
           jumpSound.current.play().catch(()=>{});
@@ -311,7 +334,6 @@ export default function GameCanvas({ running, onProgress, muted, selectedSong })
     };
   }, [muted]);
 
-  /* ---------- mobile button handlers ---------- */
   const moveLeft = () => { const s = st.current; if (s) s.input.left = 1; };
   const stopLeft = () => { const s = st.current; if (s) s.input.left = 0; };
   const moveRight = () => { const s = st.current; if (s) s.input.right = 1; };
@@ -375,7 +397,7 @@ function performJump(s, powerNorm, dirX=0){
   return true;
 }
 
-function updateWorld(s, dt, jumpSound, landSound){
+function updateWorld(s, dt, jumpSound, landSound, muted){
   if(s.input.wantJump){
     const ok = performJump(s, s.input.wantJump.power, s.input.wantJump.dirX);
     if(!ok && (s.time - s.input.wantJump.at) > 0.7){
@@ -391,7 +413,7 @@ function updateWorld(s, dt, jumpSound, landSound){
   s.player.x  += s.player.vx * dt;
   s.player.y  += s.player.vy * dt;
   s.player.x   = Math.max(0, Math.min(W - s.player.size, s.player.x));
-  if(s.player.vy >= 0){
+    if(s.player.vy >= 0){
     const px = s.player.x, ps = s.player.size;
     const prevBottom = prevY + ps;
     const currBottom = s.player.y + ps;
@@ -402,7 +424,7 @@ function updateWorld(s, dt, jumpSound, landSound){
       if(horz && crossed){ 
         s.player.y = top - ps; 
         s.player.vy = 0; 
-        if (!s.player.onGround && landSound?.current) {
+        if (!s.player.onGround && landSound?.current && !muted) {
           landSound.current.currentTime = 0;
           landSound.current.play().catch(()=>{});
         }
@@ -411,12 +433,15 @@ function updateWorld(s, dt, jumpSound, landSound){
         break; 
       }
     }
-  }else{ if(s.player.onGround) s.lastGroundedAt = s.time; s.player.onGround = false; }
+  } else { 
+    if(s.player.onGround) s.lastGroundedAt = s.time; 
+    s.player.onGround = false; 
+  }
   const ps = s.player.size;
   if(s.player.y + ps > BASE_TOP){ 
     s.player.y = BASE_TOP - ps; 
     s.player.vy = 0; 
-    if (!s.player.onGround && landSound?.current) {
+    if (!s.player.onGround && landSound?.current && !muted) {
       landSound.current.currentTime = 0;
       landSound.current.play().catch(()=>{});
     }
@@ -438,7 +463,7 @@ function spawnAsNeeded(s){
     const m = spawnedMeters;
     let wMin=70, wMax=120, gap=120, movers=0;
     if (m < 300) { wMin = 70; wMax = 120; gap = 120; movers = 0; }
-    else if (m < 600) { wMin = 40; wMax = 70;  gap = 128; movers = 0.25; } // ✅ added movers between 300-600
+    else if (m < 600) { wMin = 40; wMax = 70;  gap = 128; movers = 0.25; } // ✅ movers added
     else if (m < 1000) { wMin = 50; wMax = 90;  gap = 145; movers = 0; }
     else if (m < 1500) { wMin = 54; wMax = 92;  gap = 150; movers = 0.25; }
     else if (m < 2000) { wMin = 36; wMax = 64;  gap = 165; movers = 0.32; }
@@ -503,9 +528,11 @@ function drawWorld(ctx, s){
     ctx.fillStyle = color;
     roundRect(ctx, p.x, yy, p.w, p.h, 8); ctx.fill();
     if(p.type!=="base"){ ctx.fillStyle = "rgba(80,140,255,0.25)"; roundRect(ctx, p.x, yy+12, p.w, 8, 6); ctx.fill(); }
-    // ✅ draw moving platforms if move > 0
     if (p.move) {
-      p.x += Math.sin(s.time + p.phase) * 0.8;
+      const dx = Math.sin(s.time*1.5 + p.phase) * p.move * 0.5;
+      p.x += dx * 0.015; // smoother movement
+      if (p.x < 10) p.x = 10;
+      if (p.x + p.w > W-10) p.x = W-10-p.w;
     }
   }
   const px = s.player.x, py = s.player.y - s.camY + H/2, ps = s.player.size;
@@ -548,5 +575,8 @@ function roundRect(ctx, x, y, w, h, r){
   ctx.quadraticCurveTo(x, y, x+rr, y);
   ctx.closePath();
 }
+
 function lerp(a,b,t){ return a + (b-a)*t; }
 function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+
+ 

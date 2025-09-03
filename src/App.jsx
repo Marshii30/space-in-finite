@@ -124,17 +124,7 @@ export default function App() {
         <>
           {!playing && (
             <div className="modal-wrap">
-              <div
-                className="modal"
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  textAlign: "center",
-                  padding: "30px",
-                }}
-              >
+              <div className="modal" style={{ textAlign: "center" }}>
                 <h1 style={{ marginTop: 0 }}>🚀 Space in-Finite</h1>
                 <p style={{ opacity: 0.85, margin: "6px 0 2px" }}>
                   Highest: <strong>{best} m</strong>
@@ -144,19 +134,15 @@ export default function App() {
                     Last run peak: {lastPeak} m
                   </p>
                 )}
-                <p className="tiny" style={{ marginBottom: 20 }}>
+                <p className="tiny" style={{ marginBottom: 14 }}>
                   Hold & release <kbd>Space</kbd> or drag anywhere then release to jump. ← / → to steer.
                 </p>
                 <button
                   className="btn"
-                  style={{
-                    fontSize: "20px",
-                    padding: "14px 28px",
-                    borderRadius: "12px",
-                  }}
+                  style={{ fontSize: "1.3rem", padding: "12px 24px" }}
                   onClick={() => setPlaying(true)}
                 >
-                  ▶ Play
+                  ▶️ Play
                 </button>
               </div>
             </div>
@@ -166,6 +152,7 @@ export default function App() {
             muted={muted}
             onProgress={handleProgress}
             selectedSong={chosenSong}   // ✅ pass song into GameCanvas
+            playerName={name}           // ✅ pass player name for leaderboard
           />
         </>
       )}
