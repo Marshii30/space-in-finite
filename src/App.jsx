@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useRef } from "react";
 import GameCanvas from "./components/GameCanvas.jsx";
 import HUD from "./components/HUD.jsx";
+import { db } from "./firebase"; 
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
 export default function App() {
   const [playing, setPlaying] = useState(false);
@@ -78,7 +80,7 @@ export default function App() {
       // no music
       setChosenSong(null);
     } else {
-      setChosenSong(songs[index]); // ✅ use absolute /songs/... path
+      setChosenSong(songs[index]); // ✅ absolute /songs/... path
       if (audioRef.current) {
         audioRef.current.src = songs[index];
         audioRef.current.play();
@@ -87,6 +89,35 @@ export default function App() {
     setStage("game");
     alert("🎵 REACH 3000M BEFORE THE SONG ENDS!");
   };
+
+  // ✅ Save score to leaderboard
+  const saveScore = async () => {
+    try {
+      await addDoc(collection(db, "leaderboard"), {
+        name: name || "Anonymous",
+        score: lastPeak,
+        createdAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.error("Error saving score:", err);
+    }
+  };
+
+  // ✅ Handle when song ends
+  useEffect(() => {
+    if (!audioRef.current) return;
+    const audio = audioRef.current;
+
+    const onEnded = async () => {
+      await saveScore();
+      alert("🎵 Game Over! Song Ended.\nYour score has been saved.");
+      setPlaying(false);
+      setStage("login");
+    };
+
+    audio.addEventListener("ended", onEnded);
+    return () => audio.removeEventListener("ended", onEnded);
+  }, [lastPeak, name]);
 
   return (
     <>
@@ -110,7 +141,7 @@ export default function App() {
       />
 
       {/* Hidden audio element */}
-      <audio ref={audioRef} hidden loop />
+      <audio ref={audioRef} hidden />
 
       {/* LOGIN SCREEN */}
       {stage === "login" && (
@@ -186,8 +217,8 @@ export default function App() {
             running={playing}
             muted={muted}
             onProgress={handleProgress}
-            selectedSong={chosenSong}   // ✅ now correct absolute path
-            playerName={name}           // ✅ pass player name for leaderboard
+            selectedSong={chosenSong}
+            playerName={name}
           />
         </>
       )}
