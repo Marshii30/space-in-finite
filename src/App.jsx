@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import GameCanvas from "./components/GameCanvas.jsx";
 import HUD from "./components/HUD.jsx";
 
@@ -14,6 +14,25 @@ export default function App() {
   const [name, setName] = useState("");
   const [age, setAge] = useState("");
   const [chosenSong, setChosenSong] = useState(null);
+
+  // audio ref
+  const audioRef = useRef(null);
+
+  // List of songs from /public/songs/
+  const songs = [
+    "/songs/Song1.mp3",
+    "/songs/Song2.mp3",
+    "/songs/Song3.mp3",
+    "/songs/Song4.mp3",
+    "/songs/Song5.mp3",
+    "/songs/Song6.mp3",
+    "/songs/Song7.mp3",
+    "/songs/Song8.mp3",
+    "/songs/Song9.mp3",
+    "/songs/Song10.mp3",
+    "/songs/Song11.mp3",
+    "/songs/Song12.mp3"
+  ];
 
   // Desktop: Space/Enter to start (only inside game stage)
   useEffect(() => {
@@ -54,9 +73,18 @@ export default function App() {
   };
 
   // handle song select
-  const handleSongSelect = (song) => {
-    setChosenSong(song);     // save selected song (can be null)
-    setStage("game");        // 🚀 don’t setPlaying yet (wait for modal Play)
+  const handleSongSelect = (index) => {
+    if (index === null) {
+      // no music
+      setChosenSong(null);
+    } else {
+      setChosenSong(songs[index]); // ✅ use absolute /songs/... path
+      if (audioRef.current) {
+        audioRef.current.src = songs[index];
+        audioRef.current.play();
+      }
+    }
+    setStage("game");
     alert("🎵 REACH 3000M BEFORE THE SONG ENDS!");
   };
 
@@ -74,8 +102,15 @@ export default function App() {
           setSettingsOpen(false);
           setPlaying(false);
           setStage("login");
+          if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.currentTime = 0;
+          }
         }}
       />
+
+      {/* Hidden audio element */}
+      <audio ref={audioRef} hidden loop />
 
       {/* LOGIN SCREEN */}
       {stage === "login" && (
@@ -103,8 +138,8 @@ export default function App() {
         <div className="song-select">
           <h2>🎶 Choose a song</h2>
           <div className="song-list">
-            {Array.from({ length: 12 }).map((_, i) => (
-              <button key={i} onClick={() => handleSongSelect(`Song${i+1}`)}>
+            {songs.map((song, i) => (
+              <button key={i} onClick={() => handleSongSelect(i)}>
                 Song {i + 1}
               </button>
             ))}
@@ -151,7 +186,7 @@ export default function App() {
             running={playing}
             muted={muted}
             onProgress={handleProgress}
-            selectedSong={chosenSong}   // ✅ pass song into GameCanvas
+            selectedSong={chosenSong}   // ✅ now correct absolute path
             playerName={name}           // ✅ pass player name for leaderboard
           />
         </>
